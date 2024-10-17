@@ -1,0 +1,9 @@
+menu "Thumb Config"
+
+    config TC_PART_NAME
+        string "Partition name"
+        default "thumbcfg"
+        help
+            Set the partition name for data exchange. This partition must exist and must be in the same in partition table.
+
+endmenu
