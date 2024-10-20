@@ -6,4 +6,11 @@ menu "Thumb Config"
         help
             Set the partition name for data exchange. This partition must exist and must be in the same in partition table.
 
+    config TC_MOUNT_PATH
+        string "Config partition mount path"
+        default "/etc"
+        help
+            Set the mount path.
+
+
 endmenu
