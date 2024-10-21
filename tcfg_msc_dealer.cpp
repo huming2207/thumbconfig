@@ -15,6 +15,12 @@ esp_err_t tcfg_msc_dealer::init(const char *part_name)
     }
 
     wl_handle = WL_INVALID_HANDLE;
+    msc_evt_group = xEventGroupCreate();
+    if (msc_evt_group == nullptr) {
+        ESP_LOGE(TAG, "MSC event group init fail");
+        return ESP_ERR_NO_MEM;
+    }
+
     auto ret = wl_mount(data_part, &wl_handle);
     if (ret != ESP_OK) {
         ESP_LOGI(TAG, "Wear level mount error: 0x%x", ret);
@@ -22,10 +28,12 @@ esp_err_t tcfg_msc_dealer::init(const char *part_name)
     }
 
     ESP_LOGI(TAG, "Mount data partition, wl handle = %ld", wl_handle);
-    spiflash_cfg.wl_handle = wl_handle;
-    const_cast<esp_vfs_fat_mount_config_t *>(&spiflash_cfg.mount_config)->format_if_mount_failed = true;
 
     ret = tinyusb_msc_storage_init_spiflash(&spiflash_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SPI flash init fail");
+        return ret;
+    }
 
     static char lang[2] = {0x09, 0x04};
     static const char *desc_str[5] = {
@@ -63,10 +71,10 @@ esp_err_t tcfg_msc_dealer::init(const char *part_name)
         return ret;
     }
 
-    msc_evt_group = xEventGroupCreate();
-    if (msc_evt_group == nullptr) {
-        ESP_LOGE(TAG, "MSC event group init fail: 0x%x", ret);
-        return ESP_ERR_NO_MEM;
+    ret = mount(CONFIG_TC_MOUNT_PATH);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SPI flash mount fail");
+        return ret;
     }
 
     return ret;
@@ -96,5 +104,30 @@ esp_err_t tcfg_msc_dealer::unmount()
     }
 
     xEventGroupClearBits(msc_evt_group, MSC_MOUNTED);
+    return ret;
+}
+
+esp_err_t tcfg_msc_dealer::try_setup_part(const char *part_name)
+{
+    const esp_vfs_fat_mount_config_t mount_config = {
+            .format_if_mount_failed = true, // Format this partition if previously not formatted
+            .max_files = 4,
+            .allocation_unit_size = CONFIG_WL_SECTOR_SIZE,
+            .disk_status_check_enable = false,
+            .use_one_fat = false,
+    };
+
+    esp_err_t ret = esp_vfs_fat_spiflash_mount_rw_wl("/tcfg_tmp", part_name, &mount_config, &wl_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "try_setup: Failed to mount (%s)", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = esp_vfs_fat_spiflash_unmount_rw_wl("/tcfg_tmp", wl_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "try_setup: Failed to unmount FATFS (%s)", esp_err_to_name(ret));
+        return ret;
+    }
+
     return ret;
 }

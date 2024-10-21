@@ -2,5 +2,15 @@
 
 esp_err_t tcfg_manager::init()
 {
-    return msc.init(CONFIG_TC_PART_NAME);
+    auto ret = msc.init(CONFIG_TC_PART_NAME);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    return ret;
+}
+
+void tcfg_manager::tcfg_checker_task(void *_ctx)
+{
+
 }

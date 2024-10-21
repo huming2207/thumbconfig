@@ -18,6 +18,8 @@ public:
 public:
     esp_err_t init();
 
+private:
+    static void tcfg_checker_task(void *_ctx);
 
 private:
     tcfg_manager() = default;

@@ -19,10 +19,25 @@ public:
     esp_err_t unmount();
 
 private:
+    esp_err_t try_setup_part(const char *part_name);
+
+private:
     wl_handle_t wl_handle = 0;
     const esp_partition_t *data_part = nullptr;
     EventGroupHandle_t msc_evt_group = nullptr;
-    tinyusb_msc_spiflash_config_t spiflash_cfg = {};
+    tinyusb_msc_spiflash_config_t spiflash_cfg = {
+            .wl_handle = wl_handle,
+            .callback_mount_changed = nullptr,
+            .callback_premount_changed = nullptr,
+            .mount_config = {
+                    .format_if_mount_failed = true,
+                    .max_files = 5,
+                    .allocation_unit_size = 0,
+                    .disk_status_check_enable = false,
+                    .use_one_fat = false,
+            },
+    };
+
     char sn_str[32] = {};
 
 private:
