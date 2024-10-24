@@ -1,7 +1,6 @@
 #pragma once
 
 #include <esp_err.h>
-#include "tcfg_msc_dealer.hpp"
 
 class tcfg_manager
 {
@@ -25,6 +24,5 @@ private:
     tcfg_manager() = default;
 
 private:
-    tcfg_msc_dealer msc = {};
 };
 
