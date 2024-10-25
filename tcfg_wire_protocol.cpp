@@ -2,6 +2,8 @@
 #include <freertos/task.h>
 #include <esp_log.h>
 #include <esp_crc.h>
+#include <cstring>
+#include <nvs_handle.hpp>
 #include "tcfg_wire_protocol.hpp"
 
 esp_err_t tcfg_wire_protocol::init(tcfg_wire_if *_wire_if)
@@ -52,15 +54,17 @@ void tcfg_wire_protocol::rx_task(void *_ctx)
         switch (next_byte) {
             case SLIP_START: {
                 begin_read = true;
+                memset(decoded_buf, 0, sizeof(decoded_buf));
+                decode_idx = 0;
                 break;
             }
 
             case SLIP_END: {
                 if (begin_read) {
-                    begin_read = false;
+                    ctx->handle_rx_pkt(decoded_buf, decode_idx);
                 }
 
-                ctx->handle_rx_pkt(decoded_buf, decode_idx);
+                begin_read = false; // Force it to stop anyway
                 break;
             }
 
@@ -158,6 +162,7 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
         }
 
         case PKT_PING: {
+            send_ack();
             break;
         }
 
@@ -326,7 +331,7 @@ esp_err_t tcfg_wire_protocol::encode_and_tx(const uint8_t *header_buf, size_t he
     return ESP_OK;
 }
 
-esp_err_t tcfg_wire_protocol::send_ack(uint16_t crc, uint32_t timeout_ticks)
+esp_err_t tcfg_wire_protocol::send_ack( uint32_t timeout_ticks)
 {
     return send_pkt(PKT_ACK, nullptr, 0, timeout_ticks);
 }
@@ -345,3 +350,128 @@ esp_err_t tcfg_wire_protocol::send_chunk_ack(tcfg_wire_protocol::chunk_ack state
 {
     return 0;
 }
+
+esp_err_t tcfg_wire_protocol::set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *payload, size_t payload_len)
+{
+    esp_err_t ret = ESP_OK;
+    auto nv = nvs::open_nvs_handle(ns, NVS_READWRITE, &ret);
+    if (!nv || ret != ESP_OK) {
+        ESP_LOGE(TAG, "SetCfg: failed to set cfg, ret=%s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    switch (type) {
+        case NVS_TYPE_U8: {
+            uint8_t val = 0;
+            memcpy(&val, payload, sizeof(val));
+            ret = ret ?: nv->set_item(key, val);
+            break;
+        }
+
+        case NVS_TYPE_I8: {
+            int8_t val = 0;
+            if (sizeof(val) < payload_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+                return ESP_ERR_INVALID_SIZE;
+            }
+
+            memcpy(&val, payload, sizeof(val));
+            ret = ret ?: nv->set_item(key, val);
+            break;
+        }
+
+        case NVS_TYPE_U16: {
+            uint16_t val = 0;
+            if (sizeof(val) < payload_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+                return ESP_ERR_INVALID_SIZE;
+            }
+
+            memcpy(&val, payload, sizeof(val));
+            ret = ret ?: nv->set_item(key, val);
+            break;
+        }
+
+        case NVS_TYPE_I16: {
+            int16_t val = 0;
+            if (sizeof(val) < payload_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+                return ESP_ERR_INVALID_SIZE;
+            }
+
+            memcpy(&val, payload, sizeof(val));
+            ret = ret ?: nv->set_item(key, val);
+            break;
+        }
+
+        case NVS_TYPE_U32: {
+            uint32_t val = 0;
+            if (sizeof(val) < payload_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+                return ESP_ERR_INVALID_SIZE;
+            }
+
+            memcpy(&val, payload, sizeof(val));
+            ret = ret ?: nv->set_item(key, val);
+            break;
+        }
+
+        case NVS_TYPE_I32: {
+            int32_t val = 0;
+            if (sizeof(val) < payload_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+                return ESP_ERR_INVALID_SIZE;
+            }
+
+            memcpy(&val, payload, sizeof(val));
+            ret = ret ?: nv->set_item(key, val);
+            break;
+        }
+
+        case NVS_TYPE_U64: {
+            uint64_t val = 0;
+            if (sizeof(val) < payload_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+                return ESP_ERR_INVALID_SIZE;
+            }
+
+            memcpy(&val, payload, sizeof(val));
+            ret = ret ?: nv->set_item(key, val);
+            break;
+        }
+        case NVS_TYPE_I64: {
+            int64_t val = 0;
+            if (sizeof(val) < payload_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+                return ESP_ERR_INVALID_SIZE;
+            }
+
+            memcpy(&val, payload, sizeof(val));
+            ret = ret ?: nv->set_item(key, val);
+            break;
+        }
+
+        case NVS_TYPE_STR: {
+            ret = ret ?: nv->set_string(key, (const char *)payload);
+            break;
+        }
+
+        case NVS_TYPE_BLOB: {
+            ret = ret ?: nv->set_blob(key, payload, payload_len);
+            break;
+        }
+
+        case NVS_TYPE_ANY: {
+            ret = ESP_ERR_INVALID_ARG;
+        }
+    }
+
+    return ret;
+}
+
+esp_err_t tcfg_wire_protocol::get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type, const void *payload, size_t buf_len, size_t *out_len)
+{
+    return 0;
+}
+
+

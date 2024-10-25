@@ -36,14 +36,17 @@ public:
     };
 
     enum pkt_type : uint8_t {
-        PKT_ACK = 0,
         PKT_DEVICE_INFO = 1,
-        PKT_GET_CONFIG = 2,
-        PKT_SET_CONFIG = 3,
-        PKT_PING = 4,
-        PKT_BEGIN_FILE_WRITE = 5,
-        PKT_FILE_CHUNK = 9,
-        PKT_CHUNK_ACK = 10,
+        PKT_PING = 2,
+        PKT_GET_CONFIG = 0x10,
+        PKT_SET_CONFIG = 0x11,
+        PKT_DEL_CONFIG = 0x12,
+        PKT_BEGIN_FILE_WRITE = 0x20,
+        PKT_FILE_CHUNK = 0x21,
+        PKT_END_FILE_WRITE = 0x22,
+        PKT_GET_FILE_INFO = 0x23,
+        PKT_ACK = 0x80,
+        PKT_CHUNK_ACK = 0x81,
         PKT_NACK = 0xff,
     };
 
@@ -117,11 +120,15 @@ private:
 private:
     static uint16_t get_crc16(const uint8_t *buf, size_t len, uint16_t init = 0);
     esp_err_t send_pkt(pkt_type type, const uint8_t *buf = nullptr, size_t len = 0, uint32_t timeout_ticks = portMAX_DELAY);
-    esp_err_t send_ack(uint16_t crc = 0, uint32_t timeout_ticks = portMAX_DELAY);
+    esp_err_t send_ack(uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t send_nack(uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t send_dev_info(uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t send_chunk_ack(tcfg_wire_protocol::chunk_ack state, uint32_t aux = 0, uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t encode_and_tx(const uint8_t *header_buf, size_t header_len, const uint8_t *buf, size_t len, uint32_t timeout_ticks = portMAX_DELAY);
+
+private:
+    esp_err_t set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *payload, size_t payload_len);
+    esp_err_t get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type, const void *payload, size_t buf_len, size_t *out_len);
 
 private:
     FILE *fp = nullptr;
