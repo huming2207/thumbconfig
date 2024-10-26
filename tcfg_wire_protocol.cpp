@@ -154,10 +154,14 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
         }
 
         case PKT_GET_CONFIG: {
+            auto *payload = (tcfg_wire_protocol::cfg_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            get_cfg_from_nvs(payload->ns, payload->key, payload->type);
             break;
         }
 
         case PKT_SET_CONFIG: {
+            auto *payload = (tcfg_wire_protocol::cfg_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            set_cfg_to_nvs(payload->ns, payload->key, payload->type, payload->value, payload->val_len);
             break;
         }
 
@@ -336,9 +340,12 @@ esp_err_t tcfg_wire_protocol::send_ack( uint32_t timeout_ticks)
     return send_pkt(PKT_ACK, nullptr, 0, timeout_ticks);
 }
 
-esp_err_t tcfg_wire_protocol::send_nack(uint32_t timeout_ticks)
+esp_err_t tcfg_wire_protocol::send_nack(int32_t ret, uint32_t timeout_ticks)
 {
-    return send_pkt(PKT_NACK, nullptr, 0, timeout_ticks);
+    tcfg_wire_protocol::nack_pkt nack = {};
+    nack.ret = ret;
+
+    return send_pkt(PKT_NACK, (uint8_t *)&nack, sizeof(nack), timeout_ticks);
 }
 
 esp_err_t tcfg_wire_protocol::send_dev_info(uint32_t timeout_ticks)
@@ -351,8 +358,12 @@ esp_err_t tcfg_wire_protocol::send_chunk_ack(tcfg_wire_protocol::chunk_ack state
     return 0;
 }
 
-esp_err_t tcfg_wire_protocol::set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *payload, size_t payload_len)
+esp_err_t tcfg_wire_protocol::set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *value, size_t value_len)
 {
+    if (ns == nullptr || key == nullptr) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
     esp_err_t ret = ESP_OK;
     auto nv = nvs::open_nvs_handle(ns, NVS_READWRITE, &ret);
     if (!nv || ret != ESP_OK) {
@@ -363,101 +374,111 @@ esp_err_t tcfg_wire_protocol::set_cfg_to_nvs(const char *ns, const char *key, nv
     switch (type) {
         case NVS_TYPE_U8: {
             uint8_t val = 0;
-            memcpy(&val, payload, sizeof(val));
+            memcpy(&val, value, sizeof(val));
             ret = ret ?: nv->set_item(key, val);
             break;
         }
 
         case NVS_TYPE_I8: {
             int8_t val = 0;
-            if (sizeof(val) < payload_len) {
-                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+            if (sizeof(val) < value_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), value_len);
                 return ESP_ERR_INVALID_SIZE;
             }
 
-            memcpy(&val, payload, sizeof(val));
+            memcpy(&val, value, sizeof(val));
             ret = ret ?: nv->set_item(key, val);
             break;
         }
 
         case NVS_TYPE_U16: {
             uint16_t val = 0;
-            if (sizeof(val) < payload_len) {
-                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+            if (sizeof(val) < value_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), value_len);
                 return ESP_ERR_INVALID_SIZE;
             }
 
-            memcpy(&val, payload, sizeof(val));
+            memcpy(&val, value, sizeof(val));
             ret = ret ?: nv->set_item(key, val);
             break;
         }
 
         case NVS_TYPE_I16: {
             int16_t val = 0;
-            if (sizeof(val) < payload_len) {
-                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+            if (sizeof(val) < value_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), value_len);
                 return ESP_ERR_INVALID_SIZE;
             }
 
-            memcpy(&val, payload, sizeof(val));
+            memcpy(&val, value, sizeof(val));
             ret = ret ?: nv->set_item(key, val);
             break;
         }
 
         case NVS_TYPE_U32: {
             uint32_t val = 0;
-            if (sizeof(val) < payload_len) {
-                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+            if (sizeof(val) < value_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), value_len);
                 return ESP_ERR_INVALID_SIZE;
             }
 
-            memcpy(&val, payload, sizeof(val));
+            memcpy(&val, value, sizeof(val));
             ret = ret ?: nv->set_item(key, val);
             break;
         }
 
         case NVS_TYPE_I32: {
             int32_t val = 0;
-            if (sizeof(val) < payload_len) {
-                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+            if (sizeof(val) < value_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), value_len);
                 return ESP_ERR_INVALID_SIZE;
             }
 
-            memcpy(&val, payload, sizeof(val));
+            memcpy(&val, value, sizeof(val));
             ret = ret ?: nv->set_item(key, val);
             break;
         }
 
         case NVS_TYPE_U64: {
             uint64_t val = 0;
-            if (sizeof(val) < payload_len) {
-                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+            if (sizeof(val) < value_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), value_len);
                 return ESP_ERR_INVALID_SIZE;
             }
 
-            memcpy(&val, payload, sizeof(val));
+            memcpy(&val, value, sizeof(val));
             ret = ret ?: nv->set_item(key, val);
             break;
         }
         case NVS_TYPE_I64: {
             int64_t val = 0;
-            if (sizeof(val) < payload_len) {
-                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), payload_len);
+            if (sizeof(val) < value_len) {
+                ESP_LOGE(TAG, "SetCfg: unexpected length: %u < %u", sizeof(val), value_len);
                 return ESP_ERR_INVALID_SIZE;
             }
 
-            memcpy(&val, payload, sizeof(val));
+            memcpy(&val, value, sizeof(val));
             ret = ret ?: nv->set_item(key, val);
             break;
         }
 
         case NVS_TYPE_STR: {
-            ret = ret ?: nv->set_string(key, (const char *)payload);
+            if (value == nullptr) {
+                ret = ESP_ERR_INVALID_ARG;
+                break;
+            }
+
+            ret = ret ?: nv->set_string(key, (const char *)value);
             break;
         }
 
         case NVS_TYPE_BLOB: {
-            ret = ret ?: nv->set_blob(key, payload, payload_len);
+            if (value == nullptr || value_len < 1) {
+                ret = ESP_ERR_INVALID_ARG;
+                break;
+            }
+
+            ret = ret ?: nv->set_blob(key, value, value_len);
             break;
         }
 
@@ -466,12 +487,144 @@ esp_err_t tcfg_wire_protocol::set_cfg_to_nvs(const char *ns, const char *key, nv
         }
     }
 
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "SetCfg: %s:%s set OK", ns, key);
+        send_ack();
+    } else {
+        ESP_LOGE(TAG, "SetCfg: %s:%s set fail: %d %s", ns, key, ret, esp_err_to_name(ret));
+        send_nack(ret);
+    }
+
     return ret;
 }
 
-esp_err_t tcfg_wire_protocol::get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type, const void *payload, size_t buf_len, size_t *out_len)
+esp_err_t tcfg_wire_protocol::get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type)
 {
-    return 0;
+    if (ns == nullptr || key == nullptr) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t ret = ESP_OK;
+    auto nv = nvs::open_nvs_handle(ns, NVS_READONLY, &ret);
+    if (!nv || ret != ESP_OK) {
+        ESP_LOGE(TAG, "SetCfg: failed to set cfg, ret=%s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    uint8_t tx_buf[TCFG_WIRE_MAX_PACKET_SIZE] = { 0 };
+    auto *pkt = (tcfg_wire_protocol::cfg_pkt *)tx_buf;
+
+    switch (type) {
+        case NVS_TYPE_U8: {
+            uint8_t val = 0;
+            size_t len = 0;
+            ret = nv->get_item_size((nvs::ItemType)type, key, len);
+            ret = ret ?: nv->get_item(key, val);
+            pkt->val_len = len;
+            memcpy(pkt->value, &val, sizeof(uint8_t));
+            break;
+        }
+        case NVS_TYPE_I8: {
+            int8_t val = 0;
+            size_t len = 0;
+            ret = nv->get_item_size((nvs::ItemType)type, key, len);
+            ret = ret ?: nv->get_item(key, val);
+            pkt->val_len = len;
+            memcpy(pkt->value, &val, sizeof(int8_t));
+            break;
+        }
+        case NVS_TYPE_U16: {
+            uint16_t val = 0;
+            size_t len = 0;
+            ret = nv->get_item_size((nvs::ItemType)type, key, len);
+            ret = ret ?: nv->get_item(key, val);
+            pkt->val_len = len;
+            memcpy(pkt->value, &val, sizeof(uint16_t));
+            break;
+        }
+        case NVS_TYPE_I16: {
+            int16_t val = 0;
+            size_t len = 0;
+            ret = nv->get_item_size((nvs::ItemType)type, key, len);
+            ret = ret ?: nv->get_item(key, val);
+            pkt->val_len = len;
+            memcpy(pkt->value, &val, sizeof(int16_t));
+            break;
+        }
+        case NVS_TYPE_U32: {
+            uint32_t val = 0;
+            size_t len = 0;
+            ret = nv->get_item_size((nvs::ItemType)type, key, len);
+            ret = ret ?: nv->get_item(key, val);
+            pkt->val_len = len;
+            memcpy(pkt->value, &val, sizeof(uint32_t));
+            break;
+        }
+        case NVS_TYPE_I32: {
+            int32_t val = 0;
+            size_t len = 0;
+            ret = nv->get_item_size((nvs::ItemType)type, key, len);
+            ret = ret ?: nv->get_item(key, val);
+            pkt->val_len = len;
+            memcpy(pkt->value, &val, sizeof(int32_t));
+            break;
+        }
+
+        case NVS_TYPE_U64: {
+            uint64_t val = 0;
+            size_t len = 0;
+            ret = nv->get_item_size((nvs::ItemType)type, key, len);
+            ret = ret ?: nv->get_item(key, val);
+            pkt->val_len = len;
+            memcpy(pkt->value, &val, sizeof(uint64_t));
+            break;
+        }
+
+        case NVS_TYPE_I64: {
+            int64_t val = 0;
+            size_t len = 0;
+            ret = nv->get_item_size((nvs::ItemType)type, key, len);
+            ret = ret ?: nv->get_item(key, val);
+            pkt->val_len = len;
+            memcpy(pkt->value, &val, sizeof(int64_t));
+            break;
+        }
+
+        case NVS_TYPE_STR: {
+            size_t len = 0;
+            ret = nv->get_item_size((nvs::ItemType)type, key, len);
+            ret = ret ?: nv->get_string(key, (char *)pkt->value, sizeof(tx_buf));
+            pkt->val_len = len;
+            break;
+        }
+
+        case NVS_TYPE_BLOB: {
+            size_t len = 0;
+            ret = nv->get_item_size((nvs::ItemType)type, key, len);
+            ret = ret ?: nv->get_blob(key, (void *)pkt->value, sizeof(tx_buf));
+            pkt->val_len = len;
+            break;
+        }
+
+        default: {
+            ret = ESP_ERR_INVALID_ARG;
+            break;
+        }
+    }
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "GetConfig: can't read config, ret=%d %s", ret, esp_err_to_name(ret));
+        send_nack(ret);
+    } else {
+        size_t tx_len = sizeof(tcfg_wire_protocol::cfg_pkt) + pkt->val_len;
+        ESP_LOGI(TAG, "GetConfig: send cfg %s:%s len=%u", ns, key, tx_len);
+        ret = send_pkt(PKT_CONFIG_RESULT, tx_buf, tx_len);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "GetConfig: can't send config, ret=%d %s", ret, esp_err_to_name(ret));
+        }
+    }
+
+    return ret;
 }
 
 

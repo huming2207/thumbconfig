@@ -45,8 +45,11 @@ public:
         PKT_FILE_CHUNK = 0x21,
         PKT_END_FILE_WRITE = 0x22,
         PKT_GET_FILE_INFO = 0x23,
+        PKT_DELETE_FILE = 0x24,
         PKT_ACK = 0x80,
         PKT_CHUNK_ACK = 0x81,
+        PKT_CONFIG_RESULT = 0x82,
+        PKT_FILE_INFO = 0x83,
         PKT_NACK = 0xff,
     };
 
@@ -76,10 +79,8 @@ public:
         uint16_t crc;
     };
 
-    struct __attribute__((packed)) ack_pkt {
-        pkt_type type;
-        uint8_t len;
-        uint16_t crc;
+    struct __attribute__((packed)) nack_pkt {
+        int32_t ret;
     };
 
     struct __attribute__((packed)) device_info {
@@ -97,11 +98,11 @@ public:
     }; // 8 bytes
 
     struct __attribute__((packed)) chunk_pkt {
-        uint8_t len;
-        uint8_t buf[UINT8_MAX];
+        uint16_t len;
+        uint8_t buf[];
     };
 
-    struct __attribute__((packed)) config_pkt {
+    struct __attribute__((packed)) cfg_pkt {
         nvs_type_t type : 8;
         uint16_t val_len;
         char ns[16];
@@ -121,14 +122,14 @@ private:
     static uint16_t get_crc16(const uint8_t *buf, size_t len, uint16_t init = 0);
     esp_err_t send_pkt(pkt_type type, const uint8_t *buf = nullptr, size_t len = 0, uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t send_ack(uint32_t timeout_ticks = portMAX_DELAY);
-    esp_err_t send_nack(uint32_t timeout_ticks = portMAX_DELAY);
+    esp_err_t send_nack(int32_t ret = 0, uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t send_dev_info(uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t send_chunk_ack(tcfg_wire_protocol::chunk_ack state, uint32_t aux = 0, uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t encode_and_tx(const uint8_t *header_buf, size_t header_len, const uint8_t *buf, size_t len, uint32_t timeout_ticks = portMAX_DELAY);
 
 private:
-    esp_err_t set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *payload, size_t payload_len);
-    esp_err_t get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type, const void *payload, size_t buf_len, size_t *out_len);
+    esp_err_t set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *value, size_t value_len);
+    esp_err_t get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type);
 
 private:
     FILE *fp = nullptr;
