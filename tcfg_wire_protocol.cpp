@@ -627,4 +627,22 @@ esp_err_t tcfg_wire_protocol::get_cfg_from_nvs(const char *ns, const char *key, 
     return ret;
 }
 
+esp_err_t tcfg_wire_protocol::handle_begin_file_write(const char *path, size_t expect_len)
+{
+    if (path == nullptr || expect_len < 1) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    file_expect_len = expect_len;
+    fp = fopen(path, "wb");
+
+    if (fp == nullptr) {
+        ESP_LOGE(TAG, "BeginFileWrite: fopen() failed!");
+        send_nack(-1);
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
 
