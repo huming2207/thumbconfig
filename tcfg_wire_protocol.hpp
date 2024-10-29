@@ -131,6 +131,7 @@ private:
     esp_err_t set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *value, size_t value_len);
     esp_err_t get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type);
     esp_err_t handle_begin_file_write(const char *path, size_t expect_len);
+    esp_err_t handle_file_chunk(const uint8_t *buf, uint16_t len);
 
 private:
     FILE *fp = nullptr;

@@ -645,4 +645,46 @@ esp_err_t tcfg_wire_protocol::handle_begin_file_write(const char *path, size_t e
     return ESP_OK;
 }
 
+esp_err_t tcfg_wire_protocol::handle_file_chunk(const uint8_t *buf, uint16_t len)
+{
+    if (fp == nullptr) {
+        ESP_LOGE(TAG, "FileChunk: not started yet!");
+        send_nack(ESP_ERR_INVALID_STATE);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (buf == nullptr || len == 0) {
+        ESP_LOGW(TAG, "FileChunk: abort requested");
+        send_chunk_ack(CHUNK_ERR_ABORT_REQUESTED);
+        fclose(fp);
+        fp = nullptr;
+        return ESP_OK;
+    }
+
+    if (ftell(fp) > file_expect_len) {
+        ESP_LOGE(TAG, "FileChunk: file written more than it supposed to: %ld < %d", ftell(fp), file_expect_len);
+        send_chunk_ack(chunk_ack::CHUNK_ERR_INTERNAL, ESP_ERR_INVALID_STATE);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    auto ret_len = fwrite(buf, 1, len, fp);
+    if (ret_len < len) {
+        ESP_LOGE(TAG, "FileChunk: can't write in full! ret_len=%d < %d", ret_len, len);
+        send_chunk_ack(chunk_ack::CHUNK_ERR_INTERNAL, ESP_ERR_INVALID_SIZE);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    if (ftell(fp) == file_expect_len) {
+        ESP_LOGE(TAG, "FileChunk: file written more than it supposed to: %ld < %d", ftell(fp), file_expect_len);
+        send_chunk_ack(chunk_ack::CHUNK_XFER_DONE, ftell(fp));
+        fflush(fp);
+        fclose(fp);
+        fp = nullptr;
+        return ESP_OK;
+    }
+
+    send_chunk_ack(chunk_ack::CHUNK_XFER_NEXT, ftell(fp));
+    return ESP_OK;
+}
+
 
