@@ -151,6 +151,7 @@ private:
     esp_err_t handle_begin_file_write(const char *path, size_t expect_len);
     esp_err_t handle_file_chunk(const uint8_t *buf, uint16_t len);
     esp_err_t handle_file_delete(const char *path);
+    esp_err_t handle_get_file_info(const char *path);
 
 private:
     FILE *fp = nullptr;

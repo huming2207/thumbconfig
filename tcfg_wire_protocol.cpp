@@ -4,6 +4,7 @@
 #include <esp_crc.h>
 #include <cstring>
 #include <nvs_handle.hpp>
+#include <mbedtls/sha256.h>
 #include "tcfg_wire_protocol.hpp"
 
 esp_err_t tcfg_wire_protocol::init(tcfg_wire_if *_wire_if)
@@ -188,6 +189,12 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
             break;
         }
 
+        case PKT_GET_FILE_INFO: {
+            auto *payload = (tcfg_wire_protocol::path_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            handle_get_file_info(payload->path);
+            break;
+        }
+
         default: {
             ESP_LOGW(TAG, "Unknown packet type 0x%x received", header->type);
             send_nack();
@@ -360,6 +367,7 @@ esp_err_t tcfg_wire_protocol::send_nack(int32_t ret, uint32_t timeout_ticks)
 
 esp_err_t tcfg_wire_protocol::send_dev_info(uint32_t timeout_ticks)
 {
+    tcfg_wire_protocol::device_info dev_info = {};
     return 0;
 }
 
@@ -705,5 +713,63 @@ esp_err_t tcfg_wire_protocol::handle_file_delete(const char *path)
 
     return send_ack();
 }
+
+esp_err_t tcfg_wire_protocol::handle_get_file_info(const char *path)
+{
+    FILE *file_info_fp = fopen(path, "r");
+    if (file_info_fp == nullptr) {
+        ESP_LOGE(TAG, "GetFileInfo: Can't open");
+        send_nack(ESP_ERR_NOT_FOUND);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    if (fseek(file_info_fp, 0, SEEK_END) < 1) {
+        ESP_LOGE(TAG, "GetFileInfo: Can't estimate length");
+        send_nack(ESP_FAIL);
+        return ESP_FAIL;
+    }
+
+    int32_t file_len = ftell(file_info_fp);
+    if (file_len < 0) {
+        ESP_LOGE(TAG, "GetFileInfo: Can't ftell() length");
+        send_nack(ESP_ERR_INVALID_SIZE);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    if (fseek(file_info_fp, 0, SEEK_SET) < 1) {
+        ESP_LOGE(TAG, "GetFileInfo: Can't estimate length");
+        send_nack(ESP_FAIL);
+        return ESP_FAIL;
+    }
+
+    if (file_len == 0) {
+        tcfg_wire_protocol::file_info_pkt info_pkt = {};
+        info_pkt.size = 0;
+
+        ESP_LOGW(TAG, "GetFileInfo: file size 0, skip SHA256");
+        return send_pkt(PKT_FILE_INFO, (uint8_t *)&info_pkt, sizeof(info_pkt));
+    }
+
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, /*is224=*/0);
+
+    uint8_t buf[64] = { 0 };
+    size_t read_len = 0;
+    while ((read_len = fread(buf, 1, sizeof(buf), fp)) > 0) {
+        mbedtls_sha256_update(&ctx, buf, read_len);
+    }
+
+    tcfg_wire_protocol::file_info_pkt info_pkt = {};
+    info_pkt.size = 0;
+    if (mbedtls_sha256_finish(&ctx, info_pkt.hash) < 0) {
+        ESP_LOGE(TAG, "GetFileInfo: Can't finalise SHA256");
+        send_nack(ESP_FAIL);
+        return ESP_FAIL;
+    }
+
+    return send_pkt(PKT_FILE_INFO, (uint8_t *)&info_pkt, sizeof(info_pkt));
+}
+
 
 
