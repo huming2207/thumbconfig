@@ -38,18 +38,23 @@ public:
     enum pkt_type : uint8_t {
         PKT_DEVICE_INFO = 1,
         PKT_PING = 2,
+        PKT_GET_UPTIME = 3,
         PKT_GET_CONFIG = 0x10,
         PKT_SET_CONFIG = 0x11,
         PKT_DEL_CONFIG = 0x12,
+        PKT_NUKE_CONFIG = 0x14,
         PKT_BEGIN_FILE_WRITE = 0x20,
         PKT_FILE_CHUNK = 0x21,
-        PKT_END_FILE_WRITE = 0x22,
-        PKT_GET_FILE_INFO = 0x23,
-        PKT_DELETE_FILE = 0x24,
+        PKT_GET_FILE_INFO = 0x22,
+        PKT_DELETE_FILE = 0x23,
+        PKT_BEGIN_OTA = 0x30,
+        PKT_OTA_CHUNK = 0x31,
+        PKT_OTA_GET_INFO = 0x32,
         PKT_ACK = 0x80,
         PKT_CHUNK_ACK = 0x81,
         PKT_CONFIG_RESULT = 0x82,
         PKT_FILE_INFO = 0x83,
+        PKT_UPTIME = 0x84,
         PKT_NACK = 0xff,
     };
 
@@ -91,8 +96,7 @@ public:
         char dev_build[32];
     };
 
-    struct __attribute__((packed)) file_info {
-        uint32_t crc; // 4
+    struct __attribute__((packed)) path_pkt {
         uint32_t len; // 4
         char path[UINT8_MAX];
     }; // 8 bytes
@@ -108,6 +112,20 @@ public:
         char ns[16];
         char key[16];
         uint8_t value[];
+    };
+
+    struct __attribute__((packed)) file_info_pkt {
+        uint32_t size;
+        uint8_t hash[32];
+    };
+
+    struct __attribute__((packed)) ota_info_pkt {
+        char version[32];
+        char name[32];
+        char comp_time[16];
+        char comp_date[16];
+        char sdk_ver[16];
+        uint8_t hash[32];
     };
 
 public:
@@ -132,6 +150,7 @@ private:
     esp_err_t get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type);
     esp_err_t handle_begin_file_write(const char *path, size_t expect_len);
     esp_err_t handle_file_chunk(const uint8_t *buf, uint16_t len);
+    esp_err_t handle_file_delete(const char *path);
 
 private:
     FILE *fp = nullptr;

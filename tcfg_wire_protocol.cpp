@@ -171,10 +171,20 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
         }
 
         case PKT_BEGIN_FILE_WRITE: {
+            auto *payload = (tcfg_wire_protocol::path_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            handle_begin_file_write(payload->path, payload->len);
             break;
         }
 
         case PKT_FILE_CHUNK: {
+            auto *payload = (tcfg_wire_protocol::chunk_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            handle_file_chunk(payload->buf, payload->len);
+            break;
+        }
+
+        case PKT_DELETE_FILE: {
+            auto *payload = (tcfg_wire_protocol::path_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            handle_file_delete(payload->path);
             break;
         }
 
@@ -685,6 +695,15 @@ esp_err_t tcfg_wire_protocol::handle_file_chunk(const uint8_t *buf, uint16_t len
 
     send_chunk_ack(chunk_ack::CHUNK_XFER_NEXT, ftell(fp));
     return ESP_OK;
+}
+
+esp_err_t tcfg_wire_protocol::handle_file_delete(const char *path)
+{
+    if (unlink(path) < 0) {
+        send_nack(ESP_FAIL);
+    }
+
+    return send_ack();
 }
 
 
