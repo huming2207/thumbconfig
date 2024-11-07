@@ -5,6 +5,9 @@
 #include <cstring>
 #include <nvs_handle.hpp>
 #include <mbedtls/sha256.h>
+#include <esp_ota_ops.h>
+#include <esp_mac.h>
+#include <esp_flash.h>
 #include "tcfg_wire_protocol.hpp"
 
 esp_err_t tcfg_wire_protocol::init(tcfg_wire_if *_wire_if)
@@ -150,7 +153,8 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
     }
 
     switch (header->type) {
-        case PKT_DEVICE_INFO: {
+        case PKT_GET_DEVICE_INFO: {
+            send_dev_info();
             break;
         }
 
@@ -192,6 +196,62 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
         case PKT_GET_FILE_INFO: {
             auto *payload = (tcfg_wire_protocol::path_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
             handle_get_file_info(payload->path);
+            break;
+        }
+
+        case PKT_BEGIN_OTA: {
+            if (ota_handle != 0) {
+                ESP_LOGW(TAG, "OTA already started!");
+                send_nack(ESP_ERR_INVALID_STATE);
+                return;
+            } else {
+                auto ota_ret = esp_ota_begin(
+                        esp_ota_get_next_update_partition(nullptr),
+                        OTA_WITH_SEQUENTIAL_WRITES, &ota_handle);
+                if (ota_ret != ESP_OK) {
+                    ESP_LOGE(TAG, "OTA begin failed; ret=%d %s", ota_ret, esp_err_to_name(ota_ret));
+                    send_nack(ota_ret);
+                } else {
+                    ESP_LOGW(TAG, "OTA begin");
+                    send_ack();
+                }
+            }
+
+            break;
+        }
+
+        case PKT_OTA_CHUNK: {
+            auto *chunk = (tcfg_wire_protocol::chunk_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            if (ota_handle == 0) {
+                ESP_LOGE(TAG, "OTA not started yet!");
+                send_nack(ESP_ERR_INVALID_STATE);
+                return;
+            }
+
+            if (chunk->len == 0) {
+                ESP_LOGW(TAG, "OTA abort requested!");
+                auto ret = esp_ota_abort(ota_handle);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "OTA failed to abort! ret=%d %s", ret, esp_err_to_name(ret));
+                    send_nack(ESP_FAIL);
+                    return;
+                }
+
+                curr_ota_chunk_offset += chunk->len;
+                send_chunk_ack(CHUNK_ERR_ABORT_REQUESTED, curr_ota_chunk_offset);
+                ota_handle = 0;
+            } else {
+                auto ret = esp_ota_write(ota_handle, chunk->buf, chunk->len);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "OTA failed to write chunk! ret=%d %s", ret, esp_err_to_name(ret));
+                    send_nack(ret);
+                    return;
+                }
+
+                curr_ota_chunk_offset += chunk->len;
+                send_chunk_ack(CHUNK_XFER_NEXT, curr_ota_chunk_offset);
+            }
+
             break;
         }
 
@@ -367,13 +427,38 @@ esp_err_t tcfg_wire_protocol::send_nack(int32_t ret, uint32_t timeout_ticks)
 
 esp_err_t tcfg_wire_protocol::send_dev_info(uint32_t timeout_ticks)
 {
-    tcfg_wire_protocol::device_info dev_info = {};
-    return 0;
+    tcfg_wire_protocol::device_info_pkt dev_info = {};
+    auto *desc = esp_app_get_description();
+    if (desc->magic_word != ESP_APP_DESC_MAGIC_WORD) {
+        ESP_LOGW(TAG, "DevInfo: invalid magic"); // Should we NACK here???
+    }
+
+    strncpy(dev_info.comp_date, desc->date, sizeof(device_info_pkt::comp_date));
+    strncpy(dev_info.comp_time, desc->time, sizeof(device_info_pkt::comp_time));
+    strncpy(dev_info.fw_ver, desc->version, sizeof(device_info_pkt::fw_ver));
+    strncpy(dev_info.sdk_ver, desc->idf_ver, sizeof(device_info_pkt::sdk_ver));
+    strncpy(dev_info.model_name, desc->project_name, sizeof(device_info_pkt::model_name));
+    memcpy(dev_info.fw_hash, desc->app_elf_sha256, sizeof(device_info_pkt::fw_hash));
+
+    auto ret = esp_efuse_mac_get_default(dev_info.mac_addr);
+    ret = ret ?: esp_flash_read_unique_chip_id(esp_flash_default_chip, (uint64_t *)dev_info.flash_id);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read UID! ret=%d %s", ret, esp_err_to_name(ret));
+        send_nack(ret);
+        return ret;
+    }
+
+    return send_pkt(PKT_DEV_INFO, (uint8_t *)&dev_info, sizeof(dev_info), timeout_ticks);;
 }
 
-esp_err_t tcfg_wire_protocol::send_chunk_ack(tcfg_wire_protocol::chunk_ack state, uint32_t aux, uint32_t timeout_ticks)
+esp_err_t tcfg_wire_protocol::send_chunk_ack(tcfg_wire_protocol::chunk_state state, uint32_t aux, uint32_t timeout_ticks)
 {
-    return 0;
+    tcfg_wire_protocol::chunk_ack_pkt pkt = {};
+    pkt.state = state;
+    pkt.aux_info = aux;
+
+    return send_pkt(PKT_CHUNK_ACK, (uint8_t *)&pkt, sizeof(pkt), timeout_ticks);;
 }
 
 esp_err_t tcfg_wire_protocol::set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *value, size_t value_len)
@@ -681,27 +766,27 @@ esp_err_t tcfg_wire_protocol::handle_file_chunk(const uint8_t *buf, uint16_t len
 
     if (ftell(fp) > file_expect_len) {
         ESP_LOGE(TAG, "FileChunk: file written more than it supposed to: %ld < %d", ftell(fp), file_expect_len);
-        send_chunk_ack(chunk_ack::CHUNK_ERR_INTERNAL, ESP_ERR_INVALID_STATE);
+        send_chunk_ack(chunk_state::CHUNK_ERR_INTERNAL, ESP_ERR_INVALID_STATE);
         return ESP_ERR_INVALID_STATE;
     }
 
     auto ret_len = fwrite(buf, 1, len, fp);
     if (ret_len < len) {
         ESP_LOGE(TAG, "FileChunk: can't write in full! ret_len=%d < %d", ret_len, len);
-        send_chunk_ack(chunk_ack::CHUNK_ERR_INTERNAL, ESP_ERR_INVALID_SIZE);
+        send_chunk_ack(chunk_state::CHUNK_ERR_INTERNAL, ESP_ERR_INVALID_SIZE);
         return ESP_ERR_INVALID_SIZE;
     }
 
     if (ftell(fp) == file_expect_len) {
         ESP_LOGE(TAG, "FileChunk: file written more than it supposed to: %ld < %d", ftell(fp), file_expect_len);
-        send_chunk_ack(chunk_ack::CHUNK_XFER_DONE, ftell(fp));
+        send_chunk_ack(chunk_state::CHUNK_XFER_DONE, ftell(fp));
         fflush(fp);
         fclose(fp);
         fp = nullptr;
         return ESP_OK;
     }
 
-    send_chunk_ack(chunk_ack::CHUNK_XFER_NEXT, ftell(fp));
+    send_chunk_ack(chunk_state::CHUNK_XFER_NEXT, ftell(fp));
     return ESP_OK;
 }
 

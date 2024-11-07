@@ -4,6 +4,7 @@
 #include "tcfg_wire_interface.hpp"
 #include <nvs.h>
 #include <nvs_flash.h>
+#include <esp_ota_ops.h>
 
 #define TCFG_WIRE_MAX_PACKET_SIZE 4096
 
@@ -36,7 +37,7 @@ public:
     };
 
     enum pkt_type : uint8_t {
-        PKT_DEVICE_INFO = 1,
+        PKT_GET_DEVICE_INFO = 1,
         PKT_PING = 2,
         PKT_GET_UPTIME = 3,
         PKT_GET_CONFIG = 0x10,
@@ -49,16 +50,18 @@ public:
         PKT_DELETE_FILE = 0x23,
         PKT_BEGIN_OTA = 0x30,
         PKT_OTA_CHUNK = 0x31,
-        PKT_OTA_GET_INFO = 0x32,
+        PKT_OTA_COMMIT = 0x32,
+        PKT_BINARY_RPC = 0x70,
         PKT_ACK = 0x80,
         PKT_CHUNK_ACK = 0x81,
         PKT_CONFIG_RESULT = 0x82,
         PKT_FILE_INFO = 0x83,
         PKT_UPTIME = 0x84,
+        PKT_DEV_INFO = 0x85,
         PKT_NACK = 0xff,
     };
 
-    enum chunk_ack : uint8_t {
+    enum chunk_state : uint8_t {
         CHUNK_XFER_DONE = 0,
         CHUNK_XFER_NEXT = 1,
         CHUNK_ERR_CRC32_FAIL = 2,
@@ -68,7 +71,7 @@ public:
     };
 
     struct __attribute__((packed)) chunk_ack_pkt {
-        chunk_ack state;
+        chunk_state state;
 
         // Can be:
         // 1. Next chunk offset (when state == 1)
@@ -88,12 +91,15 @@ public:
         int32_t ret;
     };
 
-    struct __attribute__((packed)) device_info {
+    struct __attribute__((packed)) device_info_pkt {
         uint8_t mac_addr[6];
         uint8_t flash_id[8];
-        char esp_idf_ver[32];
-        char dev_model[32];
-        char dev_build[32];
+        char sdk_ver[16];
+        char comp_time[16];
+        char comp_date[16];
+        char model_name[32];
+        char fw_ver[32];
+        uint8_t fw_hash[32];
     };
 
     struct __attribute__((packed)) path_pkt {
@@ -119,15 +125,6 @@ public:
         uint8_t hash[32];
     };
 
-    struct __attribute__((packed)) ota_info_pkt {
-        char version[32];
-        char name[32];
-        char comp_time[16];
-        char comp_date[16];
-        char sdk_ver[16];
-        uint8_t hash[32];
-    };
-
 public:
     esp_err_t init(tcfg_wire_if *_wire_if);
 
@@ -142,7 +139,7 @@ private:
     esp_err_t send_ack(uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t send_nack(int32_t ret = 0, uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t send_dev_info(uint32_t timeout_ticks = portMAX_DELAY);
-    esp_err_t send_chunk_ack(tcfg_wire_protocol::chunk_ack state, uint32_t aux = 0, uint32_t timeout_ticks = portMAX_DELAY);
+    esp_err_t send_chunk_ack(tcfg_wire_protocol::chunk_state state, uint32_t aux = 0, uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t encode_and_tx(const uint8_t *header_buf, size_t header_len, const uint8_t *buf, size_t len, uint32_t timeout_ticks = portMAX_DELAY);
 
 private:
@@ -159,6 +156,8 @@ private:
     tcfg_wire_if *wire_if = nullptr;
     EventGroupHandle_t state_evt_group = nullptr;
     TaskHandle_t rx_task_handle = nullptr;
+    esp_ota_handle_t ota_handle = 0;
+    uint32_t curr_ota_chunk_offset = 0;
 
 private:
     static const constexpr char TAG[] = "tcfg_wire";
