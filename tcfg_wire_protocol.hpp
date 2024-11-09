@@ -21,15 +21,6 @@ public:
     void operator=(tcfg_wire_protocol const &) = delete;
 
 public:
-    enum slip_byte : uint8_t {
-        SLIP_START = 0x5a,
-        SLIP_END = 0xc0,
-        SLIP_ESC = 0xdb,
-        SLIP_ESC_END = 0xdc,
-        SLIP_ESC_ESC = 0xdd,
-        SLIP_ESC_START = 0xde,
-    };
-
     enum event : uint32_t {
         EVT_NEW_PACKET = BIT(0),
         EVT_READING_PKT = BIT(1),
@@ -40,6 +31,7 @@ public:
         PKT_GET_DEVICE_INFO = 1,
         PKT_PING = 2,
         PKT_GET_UPTIME = 3,
+        PKT_REBOOT = 4,
         PKT_GET_CONFIG = 0x10,
         PKT_SET_CONFIG = 0x11,
         PKT_DEL_CONFIG = 0x12,
@@ -83,13 +75,22 @@ public:
 
     struct __attribute__((packed)) header {
         pkt_type type;
-        uint8_t len;
         uint16_t crc;
+        uint16_t len;
     };
 
     struct __attribute__((packed)) nack_pkt {
         int32_t ret;
     };
+
+    struct __attribute__((packed)) uptime_req_pkt {
+        uint64_t realtime_ms;
+    };
+
+    struct __attribute__((packed)) uptime_pkt {
+        uint64_t uptime;
+    };
+
 
     struct __attribute__((packed)) device_info_pkt {
         uint8_t mac_addr[6];
@@ -149,6 +150,10 @@ private:
     esp_err_t handle_file_chunk(const uint8_t *buf, uint16_t len);
     esp_err_t handle_file_delete(const char *path);
     esp_err_t handle_get_file_info(const char *path);
+    esp_err_t handle_ota_begin();
+    esp_err_t handle_ota_chunk(const uint8_t *buf, uint16_t len);
+    esp_err_t handle_ota_commit();
+    esp_err_t handle_uptime(uint64_t realtime_ms);
 
 private:
     FILE *fp = nullptr;
@@ -158,6 +163,7 @@ private:
     TaskHandle_t rx_task_handle = nullptr;
     esp_ota_handle_t ota_handle = 0;
     uint32_t curr_ota_chunk_offset = 0;
+    const esp_partition_t *curr_ota_part = nullptr;
 
 private:
     static const constexpr char TAG[] = "tcfg_wire";

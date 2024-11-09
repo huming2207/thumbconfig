@@ -8,6 +8,7 @@
 #include <esp_ota_ops.h>
 #include <esp_mac.h>
 #include <esp_flash.h>
+#include <esp_timer.h>
 #include "tcfg_wire_protocol.hpp"
 
 esp_err_t tcfg_wire_protocol::init(tcfg_wire_if *_wire_if)
@@ -34,103 +35,24 @@ esp_err_t tcfg_wire_protocol::init(tcfg_wire_if *_wire_if)
 void tcfg_wire_protocol::rx_task(void *_ctx)
 {
     auto *ctx = (tcfg_wire_protocol *)_ctx;
-    uint8_t decoded_buf[TCFG_WIRE_MAX_PACKET_SIZE] = { 0 };
-    bool begin_read = false, esc = false;
-    size_t decode_idx = 0;
+
     while (true) {
-        uint8_t *next_ptr = nullptr;
+        uint8_t *pkt_ptr = nullptr;
         size_t read_len = 0;
-        if (!ctx->wire_if->begin_read(&next_ptr, 1, &read_len, portMAX_DELAY)) {
+        if (!ctx->wire_if->begin_read(&pkt_ptr, &read_len, portMAX_DELAY)) {
             ESP_LOGE(TAG, "Rx: read fail");
             vTaskDelay(1);
             continue;
         }
 
-        if (next_ptr == nullptr) {
+        if (pkt_ptr == nullptr) {
             ESP_LOGE(TAG, "Rx: ringbuf returned null");
             vTaskDelay(1);
             continue;
         }
 
-        uint8_t next_byte = *next_ptr;
-        ctx->wire_if->finalise_read(next_ptr);
-
-        switch (next_byte) {
-            case SLIP_START: {
-                begin_read = true;
-                memset(decoded_buf, 0, sizeof(decoded_buf));
-                decode_idx = 0;
-                break;
-            }
-
-            case SLIP_END: {
-                if (begin_read) {
-                    ctx->handle_rx_pkt(decoded_buf, decode_idx);
-                }
-
-                begin_read = false; // Force it to stop anyway
-                break;
-            }
-
-            case SLIP_ESC: {
-                if (!begin_read) {
-                    continue;
-                }
-
-                esc = true;
-                break;
-            }
-
-            case SLIP_ESC_END: {
-                if (!begin_read) {
-                    continue;
-                }
-
-                if (esc) {
-                    decoded_buf[decode_idx++] = SLIP_END;
-                    esc = false;
-                } else {
-                    decoded_buf[decode_idx++] = SLIP_ESC_END;
-                }
-
-                break;
-            }
-
-            case SLIP_ESC_ESC: {
-                if (!begin_read) {
-                    continue;
-                }
-
-                if (esc) {
-                    decoded_buf[decode_idx++] = SLIP_ESC;
-                    esc = false;
-                } else {
-                    decoded_buf[decode_idx++] = SLIP_ESC_ESC;
-                }
-
-                break;
-            }
-
-            case SLIP_ESC_START: {
-                if (!begin_read) {
-                    continue;
-                }
-
-                if (esc) {
-                    decoded_buf[decode_idx++] = SLIP_START;
-                    esc = false;
-                } else {
-                    decoded_buf[decode_idx++] = SLIP_ESC_START;
-                }
-
-                break;
-            }
-
-            default: {
-                decoded_buf[decode_idx++] = next_byte;
-                break;
-            }
-        }
+        ctx->handle_rx_pkt(pkt_ptr, read_len);
+        ctx->wire_if->finalise_read(pkt_ptr);
     }
 }
 
@@ -175,6 +97,20 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
             break;
         }
 
+        case PKT_GET_UPTIME: {
+            auto *pkt = (tcfg_wire_protocol::uptime_req_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            handle_uptime(pkt->realtime_ms);
+            break;
+        }
+
+        case PKT_REBOOT: {
+            ESP_LOGW(TAG, "Reboot requested!");
+            send_ack();
+            vTaskDelay(pdMS_TO_TICKS(3500)); // Wait for a while to get the ACK sent...
+            esp_restart();
+            break;
+        }
+
         case PKT_BEGIN_FILE_WRITE: {
             auto *payload = (tcfg_wire_protocol::path_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
             handle_begin_file_write(payload->path, payload->len);
@@ -200,58 +136,18 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
         }
 
         case PKT_BEGIN_OTA: {
-            if (ota_handle != 0) {
-                ESP_LOGW(TAG, "OTA already started!");
-                send_nack(ESP_ERR_INVALID_STATE);
-                return;
-            } else {
-                auto ota_ret = esp_ota_begin(
-                        esp_ota_get_next_update_partition(nullptr),
-                        OTA_WITH_SEQUENTIAL_WRITES, &ota_handle);
-                if (ota_ret != ESP_OK) {
-                    ESP_LOGE(TAG, "OTA begin failed; ret=%d %s", ota_ret, esp_err_to_name(ota_ret));
-                    send_nack(ota_ret);
-                } else {
-                    ESP_LOGW(TAG, "OTA begin");
-                    send_ack();
-                }
-            }
-
+            handle_ota_begin();
             break;
         }
 
         case PKT_OTA_CHUNK: {
             auto *chunk = (tcfg_wire_protocol::chunk_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
-            if (ota_handle == 0) {
-                ESP_LOGE(TAG, "OTA not started yet!");
-                send_nack(ESP_ERR_INVALID_STATE);
-                return;
-            }
+            handle_ota_chunk(chunk->buf, chunk->len);
+            break;
+        }
 
-            if (chunk->len == 0) {
-                ESP_LOGW(TAG, "OTA abort requested!");
-                auto ret = esp_ota_abort(ota_handle);
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "OTA failed to abort! ret=%d %s", ret, esp_err_to_name(ret));
-                    send_nack(ESP_FAIL);
-                    return;
-                }
-
-                curr_ota_chunk_offset += chunk->len;
-                send_chunk_ack(CHUNK_ERR_ABORT_REQUESTED, curr_ota_chunk_offset);
-                ota_handle = 0;
-            } else {
-                auto ret = esp_ota_write(ota_handle, chunk->buf, chunk->len);
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "OTA failed to write chunk! ret=%d %s", ret, esp_err_to_name(ret));
-                    send_nack(ret);
-                    return;
-                }
-
-                curr_ota_chunk_offset += chunk->len;
-                send_chunk_ack(CHUNK_XFER_NEXT, curr_ota_chunk_offset);
-            }
-
+        case PKT_OTA_COMMIT: {
+            handle_ota_commit();
             break;
         }
 
@@ -297,116 +193,9 @@ esp_err_t tcfg_wire_protocol::send_pkt(tcfg_wire_protocol::pkt_type type, const 
 
 esp_err_t tcfg_wire_protocol::encode_and_tx(const uint8_t *header_buf, size_t header_len, const uint8_t *buf, size_t len, uint32_t timeout_ticks)
 {
-    const uint8_t slip_esc_end[] = { SLIP_ESC, SLIP_ESC_END };
-    const uint8_t slip_esc_esc[] = { SLIP_ESC, SLIP_ESC_ESC };
-    const uint8_t slip_esc_start[] = { SLIP_ESC, SLIP_ESC_START };
-
-    if (header_buf == nullptr || header_len < 1) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    const uint8_t slip_start = SLIP_START;
-    if (!wire_if->write_response(&slip_start, 1, 1)) {
-        ESP_LOGE(TAG, "Encode SLIP START failed");
+    if (!wire_if->write_response(header_buf, header_len, buf, len, timeout_ticks)) {
+        ESP_LOGE(TAG, "Write failed");
         return ESP_FAIL;
-    }
-
-    for (size_t idx = 0; idx < header_len; idx += 1) {
-        switch (header_buf[idx]) {
-            case SLIP_START: {
-                if (!wire_if->write_response(slip_esc_start, sizeof(slip_esc_start), 1)) {
-                    ESP_LOGE(TAG, "Encode header SLIP_START failed, pos=%u", idx);
-                    return ESP_FAIL;
-                }
-
-                break;
-            }
-
-            case SLIP_END: {
-                if (!wire_if->write_response(slip_esc_end, sizeof(slip_esc_end), 1)) {
-                    ESP_LOGE(TAG, "Encode header SLIP_END failed, pos=%u", idx);
-                    return ESP_FAIL;
-                }
-
-                break;
-            }
-
-            case SLIP_ESC: {
-                if (!wire_if->write_response(slip_esc_esc, sizeof(slip_esc_esc), 1)) {
-                    ESP_LOGE(TAG, "Encode header SLIP_ESC failed, pos=%u", idx);
-                    return ESP_FAIL;
-                }
-
-                break;
-            }
-
-            default: {
-                if (!wire_if->write_response(&header_buf[idx], 1, 1)) {
-                    ESP_LOGE(TAG, "Encode header failed, pos=%u", idx);
-                    return ESP_FAIL;
-                }
-            }
-        }
-    }
-
-    const uint8_t slip_end = SLIP_END;
-
-    // If no payload, then end here
-    if (buf == nullptr || len < 1) {
-        if (!wire_if->write_response(&slip_end, sizeof(slip_end), 1)) {
-            ESP_LOGE(TAG, "Encode END failed");
-            return ESP_FAIL;
-        }
-
-        return ESP_OK;
-    }
-
-    for (size_t idx = 0; idx < len; idx += 1) {
-        switch (buf[idx]) {
-            case SLIP_START: {
-                if (!wire_if->write_response(slip_esc_start, sizeof(slip_esc_start), 1)) {
-                    ESP_LOGE(TAG, "Encode header SLIP_START failed, pos=%u", idx);
-                    return ESP_FAIL;
-                }
-
-                break;
-            }
-
-            case SLIP_END: {
-                if (!wire_if->write_response(slip_esc_end, sizeof(slip_esc_end), 1)) {
-                    ESP_LOGE(TAG, "Encode header SLIP_END failed, pos=%u", idx);
-                    return ESP_FAIL;
-                }
-
-                break;
-            }
-
-            case SLIP_ESC: {
-                if (!wire_if->write_response(slip_esc_esc, sizeof(slip_esc_esc), 1)) {
-                    ESP_LOGE(TAG, "Encode header SLIP_ESC failed, pos=%u", idx);
-                    return ESP_FAIL;
-                }
-
-                break;
-            }
-
-            default: {
-                if (!wire_if->write_response(&buf[idx], 1, 1)) {
-                    ESP_LOGE(TAG, "Encode header failed, pos=%u", idx);
-                    return ESP_FAIL;
-                }
-            }
-        }
-    }
-
-    if (!wire_if->write_response(&slip_end, sizeof(slip_end), 1)) {
-        ESP_LOGE(TAG, "Encode END failed");
-        return ESP_FAIL;
-    }
-
-    if (!wire_if->flush(timeout_ticks)) {
-        ESP_LOGE(TAG, "Flush failed");
-        return ESP_ERR_TIMEOUT;
     }
 
     return ESP_OK;
@@ -854,6 +643,112 @@ esp_err_t tcfg_wire_protocol::handle_get_file_info(const char *path)
     }
 
     return send_pkt(PKT_FILE_INFO, (uint8_t *)&info_pkt, sizeof(info_pkt));
+}
+
+esp_err_t tcfg_wire_protocol::handle_ota_begin()
+{
+    if (ota_handle != 0) {
+        ESP_LOGW(TAG, "OTA already started!");
+        send_nack(ESP_ERR_INVALID_STATE);
+        return ESP_ERR_INVALID_STATE;
+    } else {
+        curr_ota_part = esp_ota_get_next_update_partition(nullptr);
+        if (curr_ota_part == nullptr) {
+            ESP_LOGW(TAG, "OTA partition not present!");
+            send_nack(ESP_ERR_NOT_SUPPORTED);
+            return ESP_ERR_NOT_SUPPORTED;
+        }
+
+        auto ota_ret = esp_ota_begin(curr_ota_part, OTA_WITH_SEQUENTIAL_WRITES, &ota_handle);
+        if (ota_ret != ESP_OK) {
+            ESP_LOGE(TAG, "OTA begin failed; ret=%d %s", ota_ret, esp_err_to_name(ota_ret));
+            send_nack(ota_ret);
+        } else {
+            ESP_LOGW(TAG, "OTA begin");
+        }
+    }
+
+    return send_ack();
+}
+
+esp_err_t tcfg_wire_protocol::handle_ota_chunk(const uint8_t *buf, uint16_t len)
+{
+    if (ota_handle == 0) {
+        ESP_LOGE(TAG, "OTA not started yet!");
+        return send_nack(ESP_ERR_INVALID_STATE);;
+    }
+
+    if (len == 0) {
+        ESP_LOGW(TAG, "OTA abort requested!");
+        auto ret = esp_ota_abort(ota_handle);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "OTA failed to abort! ret=%d %s", ret, esp_err_to_name(ret));
+            send_chunk_ack(CHUNK_ERR_INTERNAL, ret);
+            return ret;
+        }
+
+        curr_ota_chunk_offset += len;
+        ota_handle = 0;
+        return send_chunk_ack(CHUNK_ERR_ABORT_REQUESTED, curr_ota_chunk_offset);
+    } else {
+        auto ret = esp_ota_write(ota_handle, buf, len);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "OTA failed to write chunk! ret=%d %s", ret, esp_err_to_name(ret));
+            send_chunk_ack(CHUNK_ERR_INTERNAL, ret);
+            return ret;
+        }
+
+        curr_ota_chunk_offset += len;
+        return send_chunk_ack(CHUNK_XFER_NEXT, curr_ota_chunk_offset);
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t tcfg_wire_protocol::handle_ota_commit()
+{
+    if (ota_handle == 0) {
+        ESP_LOGE(TAG, "OTA commit requested but not started!");
+        send_nack(ESP_ERR_INVALID_STATE);
+
+        ota_handle = 0;
+        curr_ota_part = nullptr;
+        curr_ota_chunk_offset = 0;
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    auto ret = esp_ota_end(ota_handle);
+    ret = ret ?: esp_ota_set_boot_partition(curr_ota_part);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "OTA failed to end! ret=%d %s", ret, esp_err_to_name(ret));
+        send_nack(ret);
+
+        ota_handle = 0;
+        curr_ota_part = nullptr;
+        curr_ota_chunk_offset = 0;
+        return ret;
+    }
+
+    ota_handle = 0;
+    curr_ota_part = nullptr;
+    curr_ota_chunk_offset = 0;
+    return send_ack();
+}
+
+esp_err_t tcfg_wire_protocol::handle_uptime(uint64_t realtime_ms)
+{
+    if (realtime_ms != 0 || realtime_ms != UINT64_MAX) {
+        struct timeval tv = {};
+        tv.tv_sec = (time_t)(realtime_ms / 1000ULL);
+        tv.tv_usec = (suseconds_t)((realtime_ms % 1000ULL) * 1000ULL);
+
+        settimeofday(&tv, nullptr);
+    }
+
+    tcfg_wire_protocol::uptime_pkt pkt = {};
+    pkt.uptime = esp_timer_get_time();
+
+    return send_pkt(PKT_UPTIME, (uint8_t *)&pkt, sizeof(pkt));;
 }
 
 

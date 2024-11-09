@@ -57,13 +57,13 @@ esp_err_t tcfg_wire_usb_cdc::init(const char *serial_num, tinyusb_cdcacm_itf_t c
 }
 
 
-bool tcfg_wire_usb_cdc::begin_read(uint8_t **data_out, size_t buf_len, size_t *len_written, uint32_t wait_ticks)
+bool tcfg_wire_usb_cdc::begin_read(uint8_t **data_out, size_t *len_written, uint32_t wait_ticks)
 {
     if (data_out == nullptr) {
         return false;
     }
 
-    auto *ptr = (uint8_t *)xRingbufferReceiveUpTo(rx_rb, len_written, wait_ticks, buf_len);
+    auto *ptr = (uint8_t *)xRingbufferReceive(rx_rb, len_written, wait_ticks);
     if (ptr == nullptr) {
         return false;
     }
@@ -82,9 +82,73 @@ bool tcfg_wire_usb_cdc::finalise_read(uint8_t *ret_ptr)
     return true;
 }
 
-bool tcfg_wire_usb_cdc::write_response(const uint8_t *data_in, size_t buf_len, uint32_t wait_ticks)
+bool tcfg_wire_usb_cdc::write_response(const uint8_t *header_out, size_t header_len, const uint8_t *payload_out, size_t payload_len, uint32_t wait_ticks)
 {
-    return tinyusb_cdcacm_write_queue(cdc_channel, data_in, buf_len) > 0;
+    const uint8_t slip_esc_end[] = { SLIP_ESC, SLIP_ESC_END };
+    const uint8_t slip_esc_esc[] = { SLIP_ESC, SLIP_ESC_ESC };
+    const uint8_t slip_esc_start[] = { SLIP_ESC, SLIP_ESC_START };
+
+    if (header_out == nullptr || header_len < 1) {
+        return false;
+    }
+
+    const uint8_t slip_start = SLIP_START;
+    tinyusb_cdcacm_write_queue(cdc_channel, &slip_start, 1);
+
+    for (size_t idx = 0; idx < header_len; idx += 1) {
+        switch (header_out[idx]) {
+            case SLIP_START: {
+                tinyusb_cdcacm_write_queue(cdc_channel, slip_esc_start, sizeof(slip_esc_start));
+                break;
+            }
+
+            case SLIP_END: {
+                tinyusb_cdcacm_write_queue(cdc_channel, slip_esc_end, sizeof(slip_esc_end));
+                break;
+            }
+
+            case SLIP_ESC: {
+                tinyusb_cdcacm_write_queue(cdc_channel, slip_esc_esc, sizeof(slip_esc_esc));
+                break;
+            }
+
+            default: {
+                tinyusb_cdcacm_write_queue(cdc_channel, &header_out[idx], 1);
+            }
+        }
+    }
+
+    const uint8_t slip_end = SLIP_END;
+    if (payload_out == nullptr || payload_len == 0) {
+        tinyusb_cdcacm_write_queue(cdc_channel, &slip_end, 1);
+        return true;
+    }
+
+    for (size_t idx = 0; idx < payload_len; idx += 1) {
+        switch (payload_out[idx]) {
+            case SLIP_START: {
+                tinyusb_cdcacm_write_queue(cdc_channel, slip_esc_start, sizeof(slip_esc_start));
+                break;
+            }
+
+            case SLIP_END: {
+                tinyusb_cdcacm_write_queue(cdc_channel, slip_esc_end, sizeof(slip_esc_end));
+                break;
+            }
+
+            case SLIP_ESC: {
+                tinyusb_cdcacm_write_queue(cdc_channel, slip_esc_esc, sizeof(slip_esc_esc));
+                break;
+            }
+
+            default: {
+                tinyusb_cdcacm_write_queue(cdc_channel, &payload_out[idx], 1);
+            }
+        }
+    }
+
+    tinyusb_cdcacm_write_queue(cdc_channel, &slip_end, 1);
+    return tinyusb_cdcacm_write_flush(cdc_channel, wait_ticks) == ESP_OK;
 }
 
 bool tcfg_wire_usb_cdc::flush(uint32_t wait_ticks)
@@ -120,10 +184,104 @@ void tcfg_wire_usb_cdc::serial_rx_cb(int itf, cdcacm_event_t *event)
 
     if (event->type == CDC_EVENT_RX) {
         size_t rx_len_out = 0;
+        esp_err_t ret = ESP_OK;
         do {
-            uint8_t rx_buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE] = { 0 };
-            tinyusb_cdcacm_read(static_cast<tinyusb_cdcacm_itf_t>(itf), rx_buf, CONFIG_TINYUSB_CDC_RX_BUFSIZE, &rx_len_out);
-            xRingbufferSend(ctx->rx_rb, rx_buf, rx_len_out, pdMS_TO_TICKS(1000)); // TODO: ticks should be in Kconfig
+            uint8_t next_byte = 0;
+            ret = tinyusb_cdcacm_read(static_cast<tinyusb_cdcacm_itf_t>(itf), &next_byte, 1, &rx_len_out);
+            if (ret != ESP_OK) {
+                ESP_LOGW(TAG, "CDC read fail: %d %s", ret, esp_err_to_name(ret));
+                return;
+            }
+
+            switch (next_byte) {
+                case SLIP_START: {
+                    if (ctx->curr_decoded_buf == nullptr) {
+                        if (xRingbufferSendAcquire(ctx->rx_rb, (void **)&ctx->curr_decoded_buf, tcfg_wire_usb_cdc::MAX_PACKET_SIZE, pdMS_TO_TICKS(100)) != pdTRUE) {
+                            ESP_LOGE(TAG, "CDC Rx buffer full!");
+                            ctx->slip_esc = false;
+                            return;
+                        }
+                    }
+
+                    ctx->decode_idx = 0;
+                    ctx->slip_esc = false;
+                    break;
+                }
+
+                case SLIP_END: {
+                    if (ctx->curr_decoded_buf != nullptr) {
+                        xRingbufferSendComplete(ctx->rx_rb, ctx->curr_decoded_buf);
+                        ctx->curr_decoded_buf = nullptr;
+                        ctx->decode_idx = 0;
+                    }
+
+                    ctx->slip_esc = false;
+                    break;
+                }
+
+                case SLIP_ESC: {
+                    if (ctx->curr_decoded_buf == nullptr) {
+                        continue;
+                    }
+
+                    ctx->slip_esc = true;
+                    break;
+                }
+
+                case SLIP_ESC_END: {
+                    if (ctx->curr_decoded_buf == nullptr) {
+                        continue;
+                    }
+                    if (ctx->slip_esc) {
+                        ctx->curr_decoded_buf[ctx->decode_idx++] = SLIP_END;
+                        ctx->slip_esc = false;
+                    } else {
+                        ctx->curr_decoded_buf[ctx->decode_idx++] = SLIP_ESC_END;
+                    }
+
+                    break;
+                }
+
+                case SLIP_ESC_ESC: {
+                    if (ctx->curr_decoded_buf == nullptr) {
+                        continue;
+                    }
+
+                    if (ctx->slip_esc) {
+                        ctx->curr_decoded_buf[ctx->decode_idx++] = SLIP_ESC;
+                        ctx->slip_esc = false;
+                    } else {
+                        ctx->curr_decoded_buf[ctx->decode_idx++] = SLIP_ESC_ESC;
+                    }
+
+                    break;
+                }
+
+                case SLIP_ESC_START: {
+                    if (ctx->curr_decoded_buf == nullptr) {
+                        continue;
+                    }
+
+                    if (ctx->slip_esc) {
+                        ctx->curr_decoded_buf[ctx->decode_idx++] = SLIP_START;
+                        ctx->slip_esc = false;
+                    } else {
+                        ctx->curr_decoded_buf[ctx->decode_idx++] = SLIP_ESC_START;
+                    }
+
+                    break;
+                }
+
+                default: {
+                    ctx->curr_decoded_buf[ctx->decode_idx++] = next_byte;
+                    break;
+                }
+            }
         } while (rx_len_out != 0);
     }
+}
+
+size_t tcfg_wire_usb_cdc::max_packet_size()
+{
+    return tcfg_wire_usb_cdc::MAX_PACKET_SIZE;
 }
