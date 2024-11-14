@@ -285,3 +285,8 @@ size_t tcfg_wire_usb_cdc::max_packet_size()
 {
     return tcfg_wire_usb_cdc::MAX_PACKET_SIZE;
 }
+
+bool tcfg_wire_usb_cdc::ditch_read()
+{
+    return false;
+}

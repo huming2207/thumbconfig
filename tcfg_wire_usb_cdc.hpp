@@ -38,6 +38,7 @@ public:
     bool pause(bool force) override;
     bool resume() override;
     size_t max_packet_size() override;
+    bool ditch_read() override;
 
 private:
     tcfg_wire_usb_cdc() = default;

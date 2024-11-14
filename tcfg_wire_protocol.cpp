@@ -92,6 +92,18 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
             break;
         }
 
+        case PKT_DEL_CONFIG: {
+            auto *payload = (tcfg_wire_protocol::del_cfg_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            delete_cfg(payload->ns, payload->key);
+            break;
+        }
+
+        case PKT_NUKE_CONFIG: {
+            auto *payload = (tcfg_wire_protocol::del_cfg_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            nuke_cfg(payload->ns);
+            break;
+        }
+
         case PKT_PING: {
             send_ack();
             break;
@@ -260,6 +272,7 @@ esp_err_t tcfg_wire_protocol::set_cfg_to_nvs(const char *ns, const char *key, nv
     auto nv = nvs::open_nvs_handle(ns, NVS_READWRITE, &ret);
     if (!nv || ret != ESP_OK) {
         ESP_LOGE(TAG, "SetCfg: failed to set cfg, ret=%s", esp_err_to_name(ret));
+        send_nack(ret);
         return ret;
     }
 
@@ -400,6 +413,7 @@ esp_err_t tcfg_wire_protocol::get_cfg_from_nvs(const char *ns, const char *key, 
     auto nv = nvs::open_nvs_handle(ns, NVS_READONLY, &ret);
     if (!nv || ret != ESP_OK) {
         ESP_LOGE(TAG, "SetCfg: failed to set cfg, ret=%s", esp_err_to_name(ret));
+        send_nack(ret);
         return ret;
     }
 
@@ -517,6 +531,47 @@ esp_err_t tcfg_wire_protocol::get_cfg_from_nvs(const char *ns, const char *key, 
     }
 
     return ret;
+}
+
+esp_err_t tcfg_wire_protocol::delete_cfg(const char *ns, const char *key)
+{
+    esp_err_t ret = ESP_OK;
+    auto nv = nvs::open_nvs_handle(ns, NVS_READWRITE, &ret);
+    if (!nv || ret != ESP_OK) {
+        ESP_LOGE(TAG, "DeleteConfig: failed to delete cfg, ret=%s", esp_err_to_name(ret));
+        send_nack(ret);
+        return ret;
+    }
+
+    ret = nv->erase_item(key);
+    ret = ret ?: nv->commit();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "DeleteConfig: failed to delete cfg, ret=%s", esp_err_to_name(ret));
+        send_nack(ret);
+        return ret;
+    }
+
+    return send_ack();
+}
+
+esp_err_t tcfg_wire_protocol::nuke_cfg(const char *ns)
+{
+    esp_err_t ret = ESP_OK;
+    auto nv = nvs::open_nvs_handle(ns, NVS_READWRITE, &ret);
+    if (!nv || ret != ESP_OK) {
+        ESP_LOGE(TAG, "NukeCfg: failed to nuke cfg namespace %s, ret=%s", ns, esp_err_to_name(ret));
+        send_nack(ret);
+        return ret;
+    }
+
+    ret = nv->erase_all();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "NukeCfg: failed to nuke cfg, ret=%s", esp_err_to_name(ret));
+        send_nack(ret);
+        return ret;
+    }
+
+    return send_ack();
 }
 
 esp_err_t tcfg_wire_protocol::handle_begin_file_write(const char *path, size_t expect_len)
@@ -737,19 +792,18 @@ esp_err_t tcfg_wire_protocol::handle_ota_commit()
 
 esp_err_t tcfg_wire_protocol::handle_uptime(uint64_t realtime_ms)
 {
-    if (realtime_ms != 0 || realtime_ms != UINT64_MAX) {
+    if (realtime_ms != 0 && realtime_ms != UINT64_MAX) {
         struct timeval tv = {};
         tv.tv_sec = (time_t)(realtime_ms / 1000ULL);
         tv.tv_usec = (suseconds_t)((realtime_ms % 1000ULL) * 1000ULL);
 
+        ESP_LOGI(TAG, "Uptime: got epoch: %llu", realtime_ms);
         settimeofday(&tv, nullptr);
     }
 
     tcfg_wire_protocol::uptime_pkt pkt = {};
+    pkt.last_rst_reason = esp_reset_reason();
     pkt.uptime = esp_timer_get_time();
 
     return send_pkt(PKT_UPTIME, (uint8_t *)&pkt, sizeof(pkt));;
 }
-
-
-

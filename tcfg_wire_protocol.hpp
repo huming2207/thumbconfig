@@ -35,7 +35,7 @@ public:
         PKT_GET_CONFIG = 0x10,
         PKT_SET_CONFIG = 0x11,
         PKT_DEL_CONFIG = 0x12,
-        PKT_NUKE_CONFIG = 0x14,
+        PKT_NUKE_CONFIG = 0x13,
         PKT_BEGIN_FILE_WRITE = 0x20,
         PKT_FILE_CHUNK = 0x21,
         PKT_GET_FILE_INFO = 0x22,
@@ -88,6 +88,7 @@ public:
     };
 
     struct __attribute__((packed)) uptime_pkt {
+        esp_reset_reason_t last_rst_reason : 8;
         uint64_t uptime;
     };
 
@@ -121,6 +122,11 @@ public:
         uint8_t value[];
     };
 
+    struct __attribute__((packed)) del_cfg_pkt {
+        char ns[16];
+        char key[16];
+    };
+
     struct __attribute__((packed)) file_info_pkt {
         uint32_t size;
         uint8_t hash[32];
@@ -146,6 +152,8 @@ private:
 private:
     esp_err_t set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *value, size_t value_len);
     esp_err_t get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type);
+    esp_err_t delete_cfg(const char *ns, const char *key);
+    esp_err_t nuke_cfg(const char *ns);
     esp_err_t handle_begin_file_write(const char *path, size_t expect_len);
     esp_err_t handle_file_chunk(const uint8_t *buf, uint16_t len);
     esp_err_t handle_file_delete(const char *path);
