@@ -9,6 +9,7 @@
 #include <esp_mac.h>
 #include <esp_flash.h>
 #include <esp_timer.h>
+#include <soc/rtc_cntl_reg.h>
 #include "tcfg_wire_protocol.hpp"
 
 esp_err_t tcfg_wire_protocol::init(tcfg_wire_if *_wire_if)
@@ -119,6 +120,15 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
             ESP_LOGW(TAG, "Reboot requested!");
             send_ack();
             vTaskDelay(pdMS_TO_TICKS(3500)); // Wait for a while to get the ACK sent...
+            esp_restart();
+            break;
+        }
+
+        case PKT_REBOOT_BOOTLOADER: {
+            ESP_LOGW(TAG, "Reboot to BL requested!");
+            send_ack();
+            vTaskDelay(pdMS_TO_TICKS(3500)); // Wait for a while to get the ACK sent...
+            REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
             esp_restart();
             break;
         }

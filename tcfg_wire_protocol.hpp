@@ -32,6 +32,7 @@ public:
         PKT_PING = 2,
         PKT_GET_UPTIME = 3,
         PKT_REBOOT = 4,
+        PKT_REBOOT_BOOTLOADER = 5,
         PKT_GET_CONFIG = 0x10,
         PKT_SET_CONFIG = 0x11,
         PKT_DEL_CONFIG = 0x12,
