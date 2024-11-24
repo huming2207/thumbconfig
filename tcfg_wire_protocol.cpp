@@ -141,7 +141,7 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
 
         case PKT_FILE_CHUNK: {
             auto *payload = (tcfg_wire_protocol::chunk_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
-            handle_file_chunk(payload->buf, payload->len);
+            handle_file_chunk(payload->buf, header->len);
             break;
         }
 
@@ -164,7 +164,7 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
 
         case PKT_OTA_CHUNK: {
             auto *chunk = (tcfg_wire_protocol::chunk_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
-            handle_ota_chunk(chunk->buf, chunk->len);
+            handle_ota_chunk(chunk->buf, header->len);
             break;
         }
 

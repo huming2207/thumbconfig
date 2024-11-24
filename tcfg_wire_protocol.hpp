@@ -44,13 +44,15 @@ public:
         PKT_BEGIN_OTA = 0x30,
         PKT_OTA_CHUNK = 0x31,
         PKT_OTA_COMMIT = 0x32,
-        PKT_BINARY_RPC = 0x70,
+        PKT_BIN_RPC_REQUEST = 0x70,
         PKT_ACK = 0x80,
         PKT_CHUNK_ACK = 0x81,
         PKT_CONFIG_RESULT = 0x82,
         PKT_FILE_INFO = 0x83,
         PKT_UPTIME = 0x84,
         PKT_DEV_INFO = 0x85,
+        PKT_BIN_RPC_REPLY = 0x86,
+        PKT_JSON_RPC_REPLY = 0x87,
         PKT_NACK = 0xff,
     };
 
@@ -111,7 +113,6 @@ public:
     }; // 8 bytes
 
     struct __attribute__((packed)) chunk_pkt {
-        uint16_t len;
         uint8_t buf[];
     };
 
