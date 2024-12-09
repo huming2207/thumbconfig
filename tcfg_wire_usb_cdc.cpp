@@ -4,11 +4,18 @@
 #include "tcfg_wire_usb_cdc.hpp"
 #include "tinyusb.h"
 #include "tusb_cdc_acm.h"
+#include <esp_mac.h>
+#include <esp_flash.h>
 
 esp_err_t tcfg_wire_usb_cdc::init(const char *serial_num, tinyusb_cdcacm_itf_t channel)
 {
     if (serial_num == nullptr) {
-        strncpy(sn_str, "1145141919810893", sizeof(sn_str));
+        uint8_t sn_buf[16] = { 0 };
+        esp_efuse_mac_get_default(sn_buf);
+        esp_flash_read_unique_chip_id(esp_flash_default_chip, reinterpret_cast<uint64_t *>(sn_buf + 6));
+        snprintf(sn_str, sizeof(sn_str), "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+                 sn_buf[0], sn_buf[1], sn_buf[2], sn_buf[3], sn_buf[4], sn_buf[5], sn_buf[6], sn_buf[7],
+                 sn_buf[8], sn_buf[9], sn_buf[10], sn_buf[11], sn_buf[12], sn_buf[13]);
     } else {
         strncpy(sn_str, serial_num, sizeof(sn_str));
     }

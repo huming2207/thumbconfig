@@ -30,7 +30,7 @@ public:
     };
 
 public:
-    esp_err_t init(const char *serial_num, tinyusb_cdcacm_itf_t channel = TINYUSB_CDC_ACM_0);
+    esp_err_t init(const char *serial_num = nullptr, tinyusb_cdcacm_itf_t channel = TINYUSB_CDC_ACM_0);
     bool begin_read(uint8_t **data_out, size_t *len_written, uint32_t wait_ticks) override;
     bool finalise_read(uint8_t *ret_ptr) override;
     bool write_response(const uint8_t *header_out, size_t header_len, const uint8_t *payload_out, size_t payload_len, uint32_t wait_ticks) override;
