@@ -10,9 +10,9 @@
 #include <esp_flash.h>
 #include <esp_timer.h>
 #include <soc/rtc_cntl_reg.h>
-#include "tcfg_wire_protocol.hpp"
+#include "tcfg_client.hpp"
 
-esp_err_t tcfg_wire_protocol::init(tcfg_wire_if *_wire_if)
+esp_err_t tcfg_client::init(tcfg_wire_if *_wire_if)
 {
     wire_if = _wire_if;
     if (wire_if == nullptr) {
@@ -33,9 +33,9 @@ esp_err_t tcfg_wire_protocol::init(tcfg_wire_if *_wire_if)
     return ESP_OK;
 }
 
-void tcfg_wire_protocol::rx_task(void *_ctx)
+void tcfg_client::rx_task(void *_ctx)
 {
-    auto *ctx = (tcfg_wire_protocol *)_ctx;
+    auto *ctx = (tcfg_client *)_ctx;
 
     while (true) {
         uint8_t *pkt_ptr = nullptr;
@@ -57,13 +57,13 @@ void tcfg_wire_protocol::rx_task(void *_ctx)
     }
 }
 
-void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
+void tcfg_client::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
 {
-    if (buf == nullptr || decoded_len < sizeof(tcfg_wire_protocol::header)) {
+    if (buf == nullptr || decoded_len < sizeof(tcfg_client::header)) {
         return;
     }
 
-    auto *header = (tcfg_wire_protocol::header *)buf;
+    auto *header = (tcfg_client::header *)buf;
 
     uint16_t expected_crc = header->crc;
     header->crc = 0;
@@ -82,25 +82,25 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
         }
 
         case PKT_GET_CONFIG: {
-            auto *payload = (tcfg_wire_protocol::cfg_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            auto *payload = (tcfg_client::cfg_pkt *)(buf + sizeof(tcfg_client::header));
             get_cfg_from_nvs(payload->ns, payload->key, payload->type);
             break;
         }
 
         case PKT_SET_CONFIG: {
-            auto *payload = (tcfg_wire_protocol::cfg_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            auto *payload = (tcfg_client::cfg_pkt *)(buf + sizeof(tcfg_client::header));
             set_cfg_to_nvs(payload->ns, payload->key, payload->type, payload->value, payload->val_len);
             break;
         }
 
         case PKT_DEL_CONFIG: {
-            auto *payload = (tcfg_wire_protocol::del_cfg_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            auto *payload = (tcfg_client::del_cfg_pkt *)(buf + sizeof(tcfg_client::header));
             delete_cfg(payload->ns, payload->key);
             break;
         }
 
         case PKT_NUKE_CONFIG: {
-            auto *payload = (tcfg_wire_protocol::del_cfg_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            auto *payload = (tcfg_client::del_cfg_pkt *)(buf + sizeof(tcfg_client::header));
             nuke_cfg(payload->ns);
             break;
         }
@@ -111,7 +111,7 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
         }
 
         case PKT_GET_UPTIME: {
-            auto *pkt = (tcfg_wire_protocol::uptime_req_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            auto *pkt = (tcfg_client::uptime_req_pkt *)(buf + sizeof(tcfg_client::header));
             handle_uptime(pkt->realtime_ms);
             break;
         }
@@ -134,25 +134,25 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
         }
 
         case PKT_BEGIN_FILE_WRITE: {
-            auto *payload = (tcfg_wire_protocol::path_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            auto *payload = (tcfg_client::path_pkt *)(buf + sizeof(tcfg_client::header));
             handle_begin_file_write(payload->path, payload->len);
             break;
         }
 
         case PKT_FILE_CHUNK: {
-            auto *payload = (tcfg_wire_protocol::chunk_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
-            handle_file_chunk(payload->buf, header->len);
+            auto *payload = (uint8_t *)(buf + sizeof(tcfg_client::header));
+            handle_file_chunk(payload, header->len);
             break;
         }
 
         case PKT_DELETE_FILE: {
-            auto *payload = (tcfg_wire_protocol::path_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            auto *payload = (tcfg_client::path_pkt *)(buf + sizeof(tcfg_client::header));
             handle_file_delete(payload->path);
             break;
         }
 
         case PKT_GET_FILE_INFO: {
-            auto *payload = (tcfg_wire_protocol::path_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
+            auto *payload = (tcfg_client::path_pkt *)(buf + sizeof(tcfg_client::header));
             handle_get_file_info(payload->path);
             break;
         }
@@ -163,8 +163,8 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
         }
 
         case PKT_OTA_CHUNK: {
-            auto *chunk = (tcfg_wire_protocol::chunk_pkt *)(buf + sizeof(tcfg_wire_protocol::header));
-            handle_ota_chunk(chunk->buf, header->len);
+            auto *chunk = (uint8_t *)(buf + sizeof(tcfg_client::header));
+            handle_ota_chunk(chunk, header->len);
             break;
         }
 
@@ -181,7 +181,7 @@ void tcfg_wire_protocol::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
     }
 }
 
-uint16_t tcfg_wire_protocol::get_crc16(const uint8_t *buf, size_t len, uint16_t init)
+uint16_t tcfg_client::get_crc16(const uint8_t *buf, size_t len, uint16_t init)
 {
 //  * CRC-16/XMODEM, poly= 0x1021, init = 0x0000, refin = false, refout = false, xorout = 0x0000
 // *     crc = ~crc16_be((uint16_t)~0x0000, buf, length);
@@ -192,11 +192,11 @@ uint16_t tcfg_wire_protocol::get_crc16(const uint8_t *buf, size_t len, uint16_t 
     return ~esp_crc16_be((uint16_t)~init, buf, len);
 }
 
-esp_err_t tcfg_wire_protocol::send_pkt(tcfg_wire_protocol::pkt_type type, const uint8_t *buf, size_t len, uint32_t timeout_ms)
+esp_err_t tcfg_client::send_pkt(tcfg_client::pkt_type type, const uint8_t *buf, size_t len, uint32_t timeout_ms)
 {
     if (buf == nullptr && len > 0) return ESP_ERR_INVALID_ARG;
 
-    tcfg_wire_protocol::header header = {};
+    tcfg_client::header header = {};
     header.type = type;
     header.len = len;
     header.crc = 0; // Set later
@@ -213,7 +213,7 @@ esp_err_t tcfg_wire_protocol::send_pkt(tcfg_wire_protocol::pkt_type type, const 
     }
 }
 
-esp_err_t tcfg_wire_protocol::encode_and_tx(const uint8_t *header_buf, size_t header_len, const uint8_t *buf, size_t len, uint32_t timeout_ticks)
+esp_err_t tcfg_client::encode_and_tx(const uint8_t *header_buf, size_t header_len, const uint8_t *buf, size_t len, uint32_t timeout_ticks)
 {
     if (!wire_if->write_response(header_buf, header_len, buf, len, timeout_ticks)) {
         ESP_LOGE(TAG, "Write failed");
@@ -223,22 +223,22 @@ esp_err_t tcfg_wire_protocol::encode_and_tx(const uint8_t *header_buf, size_t he
     return ESP_OK;
 }
 
-esp_err_t tcfg_wire_protocol::send_ack( uint32_t timeout_ticks)
+esp_err_t tcfg_client::send_ack(uint32_t timeout_ticks)
 {
     return send_pkt(PKT_ACK, nullptr, 0, timeout_ticks);
 }
 
-esp_err_t tcfg_wire_protocol::send_nack(int32_t ret, uint32_t timeout_ticks)
+esp_err_t tcfg_client::send_nack(int32_t ret, uint32_t timeout_ticks)
 {
-    tcfg_wire_protocol::nack_pkt nack = {};
+    tcfg_client::nack_pkt nack = {};
     nack.ret = ret;
 
     return send_pkt(PKT_NACK, (uint8_t *)&nack, sizeof(nack), timeout_ticks);
 }
 
-esp_err_t tcfg_wire_protocol::send_dev_info(uint32_t timeout_ticks)
+esp_err_t tcfg_client::send_dev_info(uint32_t timeout_ticks)
 {
-    tcfg_wire_protocol::device_info_pkt dev_info = {};
+    tcfg_client::device_info_pkt dev_info = {};
     auto *desc = esp_app_get_description();
     if (desc->magic_word != ESP_APP_DESC_MAGIC_WORD) {
         ESP_LOGW(TAG, "DevInfo: invalid magic"); // Should we NACK here???
@@ -263,16 +263,16 @@ esp_err_t tcfg_wire_protocol::send_dev_info(uint32_t timeout_ticks)
     return send_pkt(PKT_DEV_INFO, (uint8_t *)&dev_info, sizeof(dev_info), timeout_ticks);;
 }
 
-esp_err_t tcfg_wire_protocol::send_chunk_ack(tcfg_wire_protocol::chunk_state state, uint32_t aux, uint32_t timeout_ticks)
+esp_err_t tcfg_client::send_chunk_ack(tcfg_client::chunk_state state, uint32_t aux, uint32_t timeout_ticks)
 {
-    tcfg_wire_protocol::chunk_ack_pkt pkt = {};
+    tcfg_client::chunk_ack_pkt pkt = {};
     pkt.state = state;
     pkt.aux_info = aux;
 
     return send_pkt(PKT_CHUNK_ACK, (uint8_t *)&pkt, sizeof(pkt), timeout_ticks);;
 }
 
-esp_err_t tcfg_wire_protocol::set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *value, size_t value_len)
+esp_err_t tcfg_client::set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *value, size_t value_len)
 {
     if (ns == nullptr || key == nullptr) {
         return ESP_ERR_INVALID_ARG;
@@ -413,7 +413,7 @@ esp_err_t tcfg_wire_protocol::set_cfg_to_nvs(const char *ns, const char *key, nv
     return ret;
 }
 
-esp_err_t tcfg_wire_protocol::get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type)
+esp_err_t tcfg_client::get_cfg_from_nvs(const char *ns, const char *key, nvs_type_t type)
 {
     if (ns == nullptr || key == nullptr) {
         return ESP_ERR_INVALID_ARG;
@@ -428,7 +428,7 @@ esp_err_t tcfg_wire_protocol::get_cfg_from_nvs(const char *ns, const char *key, 
     }
 
     uint8_t tx_buf[TCFG_WIRE_MAX_PACKET_SIZE] = { 0 };
-    auto *pkt = (tcfg_wire_protocol::cfg_pkt *)tx_buf;
+    auto *pkt = (tcfg_client::cfg_pkt *)tx_buf;
 
     switch (type) {
         case NVS_TYPE_U8: {
@@ -532,7 +532,7 @@ esp_err_t tcfg_wire_protocol::get_cfg_from_nvs(const char *ns, const char *key, 
         ESP_LOGE(TAG, "GetConfig: can't read config, ret=%d %s", ret, esp_err_to_name(ret));
         send_nack(ret);
     } else {
-        size_t tx_len = sizeof(tcfg_wire_protocol::cfg_pkt) + pkt->val_len;
+        size_t tx_len = sizeof(tcfg_client::cfg_pkt) + pkt->val_len;
         ESP_LOGI(TAG, "GetConfig: send cfg %s:%s len=%u", ns, key, tx_len);
         ret = send_pkt(PKT_CONFIG_RESULT, tx_buf, tx_len);
         if (ret != ESP_OK) {
@@ -543,7 +543,7 @@ esp_err_t tcfg_wire_protocol::get_cfg_from_nvs(const char *ns, const char *key, 
     return ret;
 }
 
-esp_err_t tcfg_wire_protocol::delete_cfg(const char *ns, const char *key)
+esp_err_t tcfg_client::delete_cfg(const char *ns, const char *key)
 {
     esp_err_t ret = ESP_OK;
     auto nv = nvs::open_nvs_handle(ns, NVS_READWRITE, &ret);
@@ -564,7 +564,7 @@ esp_err_t tcfg_wire_protocol::delete_cfg(const char *ns, const char *key)
     return send_ack();
 }
 
-esp_err_t tcfg_wire_protocol::nuke_cfg(const char *ns)
+esp_err_t tcfg_client::nuke_cfg(const char *ns)
 {
     esp_err_t ret = ESP_OK;
     auto nv = nvs::open_nvs_handle(ns, NVS_READWRITE, &ret);
@@ -584,7 +584,7 @@ esp_err_t tcfg_wire_protocol::nuke_cfg(const char *ns)
     return send_ack();
 }
 
-esp_err_t tcfg_wire_protocol::handle_begin_file_write(const char *path, size_t expect_len)
+esp_err_t tcfg_client::handle_begin_file_write(const char *path, size_t expect_len)
 {
     if (path == nullptr || expect_len < 1) {
         return ESP_ERR_INVALID_ARG;
@@ -602,7 +602,7 @@ esp_err_t tcfg_wire_protocol::handle_begin_file_write(const char *path, size_t e
     return ESP_OK;
 }
 
-esp_err_t tcfg_wire_protocol::handle_file_chunk(const uint8_t *buf, uint16_t len)
+esp_err_t tcfg_client::handle_file_chunk(const uint8_t *buf, uint16_t len)
 {
     if (fp == nullptr) {
         ESP_LOGE(TAG, "FileChunk: not started yet!");
@@ -644,7 +644,7 @@ esp_err_t tcfg_wire_protocol::handle_file_chunk(const uint8_t *buf, uint16_t len
     return ESP_OK;
 }
 
-esp_err_t tcfg_wire_protocol::handle_file_delete(const char *path)
+esp_err_t tcfg_client::handle_file_delete(const char *path)
 {
     if (unlink(path) < 0) {
         send_nack(ESP_FAIL);
@@ -653,7 +653,7 @@ esp_err_t tcfg_wire_protocol::handle_file_delete(const char *path)
     return send_ack();
 }
 
-esp_err_t tcfg_wire_protocol::handle_get_file_info(const char *path)
+esp_err_t tcfg_client::handle_get_file_info(const char *path)
 {
     FILE *file_info_fp = fopen(path, "r");
     if (file_info_fp == nullptr) {
@@ -682,7 +682,7 @@ esp_err_t tcfg_wire_protocol::handle_get_file_info(const char *path)
     }
 
     if (file_len == 0) {
-        tcfg_wire_protocol::file_info_pkt info_pkt = {};
+        tcfg_client::file_info_pkt info_pkt = {};
         info_pkt.size = 0;
 
         ESP_LOGW(TAG, "GetFileInfo: file size 0, skip SHA256");
@@ -699,7 +699,7 @@ esp_err_t tcfg_wire_protocol::handle_get_file_info(const char *path)
         mbedtls_sha256_update(&ctx, buf, read_len);
     }
 
-    tcfg_wire_protocol::file_info_pkt info_pkt = {};
+    tcfg_client::file_info_pkt info_pkt = {};
     info_pkt.size = 0;
     if (mbedtls_sha256_finish(&ctx, info_pkt.hash) < 0) {
         ESP_LOGE(TAG, "GetFileInfo: Can't finalise SHA256");
@@ -710,7 +710,7 @@ esp_err_t tcfg_wire_protocol::handle_get_file_info(const char *path)
     return send_pkt(PKT_FILE_INFO, (uint8_t *)&info_pkt, sizeof(info_pkt));
 }
 
-esp_err_t tcfg_wire_protocol::handle_ota_begin()
+esp_err_t tcfg_client::handle_ota_begin()
 {
     if (ota_handle != 0) {
         ESP_LOGW(TAG, "OTA already started!");
@@ -736,7 +736,7 @@ esp_err_t tcfg_wire_protocol::handle_ota_begin()
     return send_ack();
 }
 
-esp_err_t tcfg_wire_protocol::handle_ota_chunk(const uint8_t *buf, uint16_t len)
+esp_err_t tcfg_client::handle_ota_chunk(const uint8_t *buf, uint16_t len)
 {
     if (ota_handle == 0) {
         ESP_LOGE(TAG, "OTA not started yet!");
@@ -770,7 +770,7 @@ esp_err_t tcfg_wire_protocol::handle_ota_chunk(const uint8_t *buf, uint16_t len)
     return ESP_OK;
 }
 
-esp_err_t tcfg_wire_protocol::handle_ota_commit()
+esp_err_t tcfg_client::handle_ota_commit()
 {
     if (ota_handle == 0) {
         ESP_LOGE(TAG, "OTA commit requested but not started!");
@@ -800,7 +800,7 @@ esp_err_t tcfg_wire_protocol::handle_ota_commit()
     return send_ack();
 }
 
-esp_err_t tcfg_wire_protocol::handle_uptime(uint64_t realtime_ms)
+esp_err_t tcfg_client::handle_uptime(uint64_t realtime_ms)
 {
     if (realtime_ms != 0 && realtime_ms != UINT64_MAX) {
         struct timeval tv = {};
@@ -811,7 +811,7 @@ esp_err_t tcfg_wire_protocol::handle_uptime(uint64_t realtime_ms)
         settimeofday(&tv, nullptr);
     }
 
-    tcfg_wire_protocol::uptime_pkt pkt = {};
+    tcfg_client::uptime_pkt pkt = {};
     pkt.last_rst_reason = esp_reset_reason();
     pkt.uptime = esp_timer_get_time();
 

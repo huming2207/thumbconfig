@@ -1,6 +1,6 @@
 #pragma once
 
-#include "tcfg_wire_protocol.hpp"
+#include "tcfg_client.hpp"
 #include "tcfg_wire_interface.hpp"
 #include <nvs.h>
 #include <nvs_flash.h>
@@ -8,17 +8,17 @@
 
 #define TCFG_WIRE_MAX_PACKET_SIZE 4096
 
-class tcfg_wire_protocol
+class tcfg_client
 {
 public:
-    static tcfg_wire_protocol *instance()
+    static tcfg_client *instance()
     {
-        static tcfg_wire_protocol _instance;
+        static tcfg_client _instance;
         return &_instance;
     }
 
-    tcfg_wire_protocol(tcfg_wire_protocol const &) = delete;
-    void operator=(tcfg_wire_protocol const &) = delete;
+    tcfg_client(tcfg_client const &) = delete;
+    void operator=(tcfg_client const &) = delete;
 
 public:
     enum event : uint32_t {
@@ -112,10 +112,6 @@ public:
         char path[UINT8_MAX];
     }; // 8 bytes
 
-    struct __attribute__((packed)) chunk_pkt {
-        uint8_t buf[];
-    };
-
     struct __attribute__((packed)) cfg_pkt {
         nvs_type_t type : 8;
         uint16_t val_len;
@@ -138,7 +134,7 @@ public:
     esp_err_t init(tcfg_wire_if *_wire_if);
 
 private:
-    tcfg_wire_protocol() = default;
+    tcfg_client() = default;
     static void rx_task(void *_ctx);
     void handle_rx_pkt(const uint8_t *buf, size_t decoded_len);
 
@@ -148,7 +144,7 @@ private:
     esp_err_t send_ack(uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t send_nack(int32_t ret = 0, uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t send_dev_info(uint32_t timeout_ticks = portMAX_DELAY);
-    esp_err_t send_chunk_ack(tcfg_wire_protocol::chunk_state state, uint32_t aux = 0, uint32_t timeout_ticks = portMAX_DELAY);
+    esp_err_t send_chunk_ack(tcfg_client::chunk_state state, uint32_t aux = 0, uint32_t timeout_ticks = portMAX_DELAY);
     esp_err_t encode_and_tx(const uint8_t *header_buf, size_t header_len, const uint8_t *buf, size_t len, uint32_t timeout_ticks = portMAX_DELAY);
 
 private:
