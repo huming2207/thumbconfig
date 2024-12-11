@@ -68,9 +68,10 @@ void tcfg_client::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
     uint16_t expected_crc = header->crc;
     header->crc = 0;
 
-    uint16_t actual_crc = get_crc16(buf, decoded_len);
+    size_t pkt_len_with_hdr = header->len + sizeof(tcfg_client::header);
+    uint16_t actual_crc = get_crc16(buf, pkt_len_with_hdr);
     if (actual_crc != expected_crc) {
-        ESP_LOGW(TAG, "Incoming packet CRC corrupted, expect 0x%x, actual 0x%x", expected_crc, actual_crc);
+        ESP_LOGE(TAG, "Incoming packet CRC corrupted, expect 0x%x, actual 0x%x decode len %u", expected_crc, actual_crc, pkt_len_with_hdr);
         send_nack();
         return;
     }
@@ -106,6 +107,7 @@ void tcfg_client::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
         }
 
         case PKT_PING: {
+            ESP_LOGI(TAG, "Got PING!");
             send_ack();
             break;
         }
