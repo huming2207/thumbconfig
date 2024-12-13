@@ -96,6 +96,7 @@ bool tcfg_wire_usb_cdc::write_response(const uint8_t *header_out, size_t header_
     const uint8_t slip_esc_start[] = { SLIP_ESC, SLIP_ESC_START };
 
     if (header_out == nullptr || header_len < 1) {
+        ESP_LOGW(TAG, "Write: header is null! Skip write");
         return false;
     }
 
@@ -128,7 +129,8 @@ bool tcfg_wire_usb_cdc::write_response(const uint8_t *header_out, size_t header_
     const uint8_t slip_end = SLIP_END;
     if (payload_out == nullptr || payload_len == 0) {
         tinyusb_cdcacm_write_queue(cdc_channel, &slip_end, 1);
-        return true;
+        ESP_LOGD(TAG, "Write: no more payload, ending");
+        return tinyusb_cdcacm_write_flush(cdc_channel, wait_ticks) == ESP_OK;
     }
 
     for (size_t idx = 0; idx < payload_len; idx += 1) {

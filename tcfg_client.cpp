@@ -217,6 +217,7 @@ esp_err_t tcfg_client::send_pkt(tcfg_client::pkt_type type, const uint8_t *buf, 
 
 esp_err_t tcfg_client::encode_and_tx(const uint8_t *header_buf, size_t header_len, const uint8_t *buf, size_t len, uint32_t timeout_ticks)
 {
+    ESP_LOGD(TAG, "EncodeAndTx: len=%u + %u", header_len, len);
     if (!wire_if->write_response(header_buf, header_len, buf, len, timeout_ticks)) {
         ESP_LOGE(TAG, "Write failed");
         return ESP_FAIL;
