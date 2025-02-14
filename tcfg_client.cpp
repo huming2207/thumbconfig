@@ -602,7 +602,7 @@ esp_err_t tcfg_client::handle_begin_file_write(const char *path, size_t expect_l
         return ESP_FAIL;
     }
 
-    return ESP_OK;
+    return send_chunk_ack(chunk_state::CHUNK_XFER_NEXT, 0);
 }
 
 esp_err_t tcfg_client::handle_file_chunk(const uint8_t *buf, uint16_t len)
