@@ -30,6 +30,29 @@ esp_err_t tcfg_client::init(tcfg_wire_if *_wire_if)
         return ESP_ERR_NO_MEM;
     }
 
+    // Do this only in main task (NOT in any other task in PSRAM) or it may crash
+    auto *desc = esp_app_get_description();
+    if (desc->magic_word != ESP_APP_DESC_MAGIC_WORD) {
+        ESP_LOGW(TAG, "DevInfo: invalid magic"); // Should we NACK here???
+    }
+
+    strncpy(dev_info.comp_date, desc->date, sizeof(device_info_pkt::comp_date));
+    strncpy(dev_info.comp_time, desc->time, sizeof(device_info_pkt::comp_time));
+    strncpy(dev_info.fw_ver, desc->version, sizeof(device_info_pkt::fw_ver));
+    strncpy(dev_info.sdk_ver, desc->idf_ver, sizeof(device_info_pkt::sdk_ver));
+    strncpy(dev_info.model_name, desc->project_name, sizeof(device_info_pkt::model_name));
+    memcpy(dev_info.fw_hash, desc->app_elf_sha256, sizeof(device_info_pkt::fw_hash));
+    dev_info.max_pkt_size = wire_if->max_packet_size();
+
+    // Do this only in main task (NOT in any other task in PSRAM) or it may crash
+    auto ret = esp_efuse_mac_get_default(dev_info.mac_addr);
+    ret = ret ?: esp_flash_read_unique_chip_id(esp_flash_default_chip, (uint64_t *)dev_info.flash_id);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read UID! ret=%d %s", ret, esp_err_to_name(ret));
+        return ret;
+    }
+
     return ESP_OK;
 }
 
@@ -38,6 +61,10 @@ void tcfg_client::rx_task(void *_ctx)
     auto *ctx = (tcfg_client *)_ctx;
 
     while (true) {
+        if (ctx == nullptr) {
+            break;
+        }
+
         uint8_t *pkt_ptr = nullptr;
         size_t read_len = 0;
         if (!ctx->wire_if->begin_read(&pkt_ptr, &read_len, portMAX_DELAY)) {
@@ -55,6 +82,8 @@ void tcfg_client::rx_task(void *_ctx)
         ctx->handle_rx_pkt(pkt_ptr, read_len);
         ctx->wire_if->finalise_read(pkt_ptr);
     }
+
+    vTaskDelete(nullptr);
 }
 
 void tcfg_client::handle_rx_pkt(const uint8_t *buf, size_t decoded_len)
@@ -241,29 +270,7 @@ esp_err_t tcfg_client::send_nack(int32_t ret, uint32_t timeout_ticks)
 
 esp_err_t tcfg_client::send_dev_info(uint32_t timeout_ticks)
 {
-    tcfg_client::device_info_pkt dev_info = {};
-    auto *desc = esp_app_get_description();
-    if (desc->magic_word != ESP_APP_DESC_MAGIC_WORD) {
-        ESP_LOGW(TAG, "DevInfo: invalid magic"); // Should we NACK here???
-    }
-
-    strncpy(dev_info.comp_date, desc->date, sizeof(device_info_pkt::comp_date));
-    strncpy(dev_info.comp_time, desc->time, sizeof(device_info_pkt::comp_time));
-    strncpy(dev_info.fw_ver, desc->version, sizeof(device_info_pkt::fw_ver));
-    strncpy(dev_info.sdk_ver, desc->idf_ver, sizeof(device_info_pkt::sdk_ver));
-    strncpy(dev_info.model_name, desc->project_name, sizeof(device_info_pkt::model_name));
-    memcpy(dev_info.fw_hash, desc->app_elf_sha256, sizeof(device_info_pkt::fw_hash));
-
-    auto ret = esp_efuse_mac_get_default(dev_info.mac_addr);
-    ret = ret ?: esp_flash_read_unique_chip_id(esp_flash_default_chip, (uint64_t *)dev_info.flash_id);
-
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read UID! ret=%d %s", ret, esp_err_to_name(ret));
-        send_nack(ret);
-        return ret;
-    }
-
-    return send_pkt(PKT_DEV_INFO, (uint8_t *)&dev_info, sizeof(dev_info), timeout_ticks);;
+    return send_pkt(PKT_DEV_INFO, (uint8_t *)&dev_info, sizeof(dev_info), timeout_ticks);
 }
 
 esp_err_t tcfg_client::send_chunk_ack(tcfg_client::chunk_state state, uint32_t aux, uint32_t timeout_ticks)
@@ -272,7 +279,7 @@ esp_err_t tcfg_client::send_chunk_ack(tcfg_client::chunk_state state, uint32_t a
     pkt.state = state;
     pkt.aux_info = aux;
 
-    return send_pkt(PKT_CHUNK_ACK, (uint8_t *)&pkt, sizeof(pkt), timeout_ticks);;
+    return send_pkt(PKT_CHUNK_ACK, (uint8_t *)&pkt, sizeof(pkt), timeout_ticks);
 }
 
 esp_err_t tcfg_client::set_cfg_to_nvs(const char *ns, const char *key, nvs_type_t type, const void *value, size_t value_len)
@@ -743,7 +750,7 @@ esp_err_t tcfg_client::handle_ota_chunk(const uint8_t *buf, uint16_t len)
 {
     if (ota_handle == 0) {
         ESP_LOGE(TAG, "OTA not started yet!");
-        return send_nack(ESP_ERR_INVALID_STATE);;
+        return send_nack(ESP_ERR_INVALID_STATE);
     }
 
     if (len == 0) {
@@ -758,19 +765,17 @@ esp_err_t tcfg_client::handle_ota_chunk(const uint8_t *buf, uint16_t len)
         curr_ota_chunk_offset += len;
         ota_handle = 0;
         return send_chunk_ack(CHUNK_ERR_ABORT_REQUESTED, curr_ota_chunk_offset);
-    } else {
-        auto ret = esp_ota_write(ota_handle, buf, len);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "OTA failed to write chunk! ret=%d %s", ret, esp_err_to_name(ret));
-            send_chunk_ack(CHUNK_ERR_INTERNAL, ret);
-            return ret;
-        }
-
-        curr_ota_chunk_offset += len;
-        return send_chunk_ack(CHUNK_XFER_NEXT, curr_ota_chunk_offset);
     }
 
-    return ESP_OK;
+    auto ret = esp_ota_write(ota_handle, buf, len);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "OTA failed to write chunk! ret=%d %s", ret, esp_err_to_name(ret));
+        send_chunk_ack(CHUNK_ERR_INTERNAL, ret);
+        return ret;
+    }
+
+    curr_ota_chunk_offset += len;
+    return send_chunk_ack(CHUNK_XFER_NEXT, curr_ota_chunk_offset);
 }
 
 esp_err_t tcfg_client::handle_ota_commit()
@@ -818,5 +823,5 @@ esp_err_t tcfg_client::handle_uptime(uint64_t realtime_ms)
     pkt.last_rst_reason = esp_reset_reason();
     pkt.uptime = esp_timer_get_time();
 
-    return send_pkt(PKT_UPTIME, (uint8_t *)&pkt, sizeof(pkt));;
+    return send_pkt(PKT_UPTIME, (uint8_t *)&pkt, sizeof(pkt));
 }

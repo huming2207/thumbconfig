@@ -105,6 +105,8 @@ public:
         char model_name[32];
         char fw_ver[32];
         uint8_t fw_hash[32];
+
+        uint32_t max_pkt_size;
     };
 
     struct __attribute__((packed)) path_pkt {
@@ -170,6 +172,7 @@ private:
     esp_ota_handle_t ota_handle = 0;
     uint32_t curr_ota_chunk_offset = 0;
     const esp_partition_t *curr_ota_part = nullptr;
+    tcfg_client::device_info_pkt dev_info = {};
 
 private:
     static const constexpr char TAG[] = "tcfg_wire";
