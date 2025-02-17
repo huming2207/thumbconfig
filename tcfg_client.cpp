@@ -645,6 +645,8 @@ esp_err_t tcfg_client::handle_file_chunk(const uint8_t *buf, uint16_t len)
     if (ftell(fp) > file_expect_len) {
         ESP_LOGE(TAG, "FileChunk: file written more than it supposed to: %ld < %d", ftell(fp), file_expect_len);
         send_chunk_ack(chunk_state::CHUNK_ERR_INTERNAL, ESP_ERR_INVALID_STATE);
+        fclose(fp);
+        fp = nullptr;
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -652,11 +654,13 @@ esp_err_t tcfg_client::handle_file_chunk(const uint8_t *buf, uint16_t len)
     if (ret_len < len) {
         ESP_LOGE(TAG, "FileChunk: can't write in full! ret_len=%d < %d", ret_len, len);
         send_chunk_ack(chunk_state::CHUNK_ERR_INTERNAL, ESP_ERR_INVALID_SIZE);
+        fclose(fp);
+        fp = nullptr;
         return ESP_ERR_INVALID_SIZE;
     }
 
     if (ftell(fp) == file_expect_len) {
-        ESP_LOGE(TAG, "FileChunk: file written more than it supposed to: %ld < %d", ftell(fp), file_expect_len);
+        ESP_LOGI(TAG, "FileChunk: received %u OK", file_expect_len);
         send_chunk_ack(chunk_state::CHUNK_XFER_DONE, ftell(fp));
         fflush(fp);
         fclose(fp);
