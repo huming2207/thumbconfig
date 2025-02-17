@@ -690,8 +690,8 @@ esp_err_t tcfg_client::handle_get_file_info(const char *path)
         return ESP_ERR_NOT_FOUND;
     }
 
-    if (fseek(file_info_fp, 0, SEEK_END) < 1) {
-        ESP_LOGE(TAG, "GetFileInfo: Can't estimate length");
+    if (fseek(file_info_fp, 0, SEEK_END) < 0) {
+        ESP_LOGE(TAG, "GetFileInfo: Can't estimate length, errno %d", errno);
         send_nack(ESP_FAIL);
         return ESP_FAIL;
     }
@@ -703,11 +703,7 @@ esp_err_t tcfg_client::handle_get_file_info(const char *path)
         return ESP_ERR_INVALID_SIZE;
     }
 
-    if (fseek(file_info_fp, 0, SEEK_SET) < 1) {
-        ESP_LOGE(TAG, "GetFileInfo: Can't estimate length");
-        send_nack(ESP_FAIL);
-        return ESP_FAIL;
-    }
+    rewind(file_info_fp);
 
     if (file_len == 0) {
         tcfg_client::file_info_pkt info_pkt = {};
@@ -721,14 +717,16 @@ esp_err_t tcfg_client::handle_get_file_info(const char *path)
     mbedtls_sha256_init(&ctx);
     mbedtls_sha256_starts(&ctx, /*is224=*/0);
 
-    uint8_t buf[64] = { 0 };
+    uint8_t buf[256] = { 0 };
     size_t read_len = 0;
-    while ((read_len = fread(buf, 1, sizeof(buf), fp)) > 0) {
+    while ((read_len = fread(buf, 1, sizeof(buf), file_info_fp)) > 0) {
         mbedtls_sha256_update(&ctx, buf, read_len);
     }
 
+    fclose(file_info_fp);
+
     tcfg_client::file_info_pkt info_pkt = {};
-    info_pkt.size = 0;
+    info_pkt.size = file_len;
     if (mbedtls_sha256_finish(&ctx, info_pkt.hash) < 0) {
         ESP_LOGE(TAG, "GetFileInfo: Can't finalise SHA256");
         send_nack(ESP_FAIL);
