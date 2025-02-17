@@ -10,6 +10,7 @@
 #include <esp_flash.h>
 #include <esp_timer.h>
 #include <soc/rtc_cntl_reg.h>
+#include <sys/stat.h>
 #include "tcfg_client.hpp"
 
 esp_err_t tcfg_client::init(tcfg_wire_if *_wire_if)
@@ -19,7 +20,7 @@ esp_err_t tcfg_client::init(tcfg_wire_if *_wire_if)
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (xTaskCreateWithCaps(rx_task, "tcfg_wire_rx", 32768, this, tskIDLE_PRIORITY + 1, &rx_task_handle, MALLOC_CAP_SPIRAM) != pdTRUE) {
+    if (xTaskCreateWithCaps(rx_task, "tcfg_wire_rx", 16384, this, tskIDLE_PRIORITY + 1, &rx_task_handle, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to create receive task");
         return ESP_ERR_NO_MEM;
     }
