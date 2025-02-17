@@ -53,6 +53,18 @@ esp_err_t tcfg_client::init(tcfg_wire_if *_wire_if)
         return ret;
     }
 
+    // Check if data partition is actually mounted...
+    struct stat st = {};
+    if (stat(BASE_PATH, &st) == 0) {
+        if (!S_ISDIR(st.st_mode)) {
+            ESP_LOGE(TAG, "Data partition isn't a path");
+            return ESP_ERR_NOT_FOUND;
+        }
+    } else {
+        ESP_LOGE(TAG, "Data partition %s isn't mounted", BASE_PATH);
+        return ESP_ERR_INVALID_STATE;
+    }
+
     return ESP_OK;
 }
 

@@ -175,6 +175,7 @@ private:
     tcfg_client::device_info_pkt dev_info = {};
 
 private:
-    static const constexpr char TAG[] = "tcfg_wire";
+    static const constexpr char TAG[] = "tcfg";
+    static const constexpr char BASE_PATH[] = "/data";
 };
 
