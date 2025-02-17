@@ -197,6 +197,10 @@ void tcfg_wire_usb_cdc::serial_rx_cb(int itf, cdcacm_event_t *event)
         do {
             uint8_t next_byte = 0;
             ret = tinyusb_cdcacm_read(static_cast<tinyusb_cdcacm_itf_t>(itf), &next_byte, 1, &rx_len_out);
+            if (rx_len_out == 0) {
+                continue;
+            }
+
             ESP_LOGD(TAG, "Recv: 0x%02x", next_byte);
             if (ret != ESP_OK) {
                 ESP_LOGW(TAG, "CDC read fail: %d %s", ret, esp_err_to_name(ret));
