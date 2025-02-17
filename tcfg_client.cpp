@@ -20,7 +20,7 @@ esp_err_t tcfg_client::init(tcfg_wire_if *_wire_if)
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (xTaskCreateWithCaps(rx_task, "tcfg_wire_rx", 16384, this, tskIDLE_PRIORITY + 1, &rx_task_handle, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) != pdTRUE) {
+    if (xTaskCreateWithCaps(rx_task, "tcfg_wire_rx", 20480, this, tskIDLE_PRIORITY + 1, &rx_task_handle, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to create receive task");
         return ESP_ERR_NO_MEM;
     }
@@ -454,78 +454,65 @@ esp_err_t tcfg_client::get_cfg_from_nvs(const char *ns, const char *key, nvs_typ
     uint8_t tx_buf[TCFG_WIRE_MAX_PACKET_SIZE] = { 0 };
     auto *pkt = (tcfg_client::cfg_pkt *)tx_buf;
 
+    memcpy(pkt->ns, ns, strnlen(ns, 16));
+    memcpy(pkt->key, key, strnlen(key, 16));
+
     switch (type) {
         case NVS_TYPE_U8: {
             uint8_t val = 0;
-            size_t len = 0;
-            ret = nv->get_item_size((nvs::ItemType)type, key, len);
             ret = ret ?: nv->get_item(key, val);
-            pkt->val_len = len;
+            pkt->val_len = sizeof(uint8_t);
             memcpy(pkt->value, &val, sizeof(uint8_t));
             break;
         }
         case NVS_TYPE_I8: {
             int8_t val = 0;
-            size_t len = 0;
-            ret = nv->get_item_size((nvs::ItemType)type, key, len);
             ret = ret ?: nv->get_item(key, val);
-            pkt->val_len = len;
+            pkt->val_len = sizeof(int8_t);
             memcpy(pkt->value, &val, sizeof(int8_t));
             break;
         }
         case NVS_TYPE_U16: {
             uint16_t val = 0;
-            size_t len = 0;
-            ret = nv->get_item_size((nvs::ItemType)type, key, len);
             ret = ret ?: nv->get_item(key, val);
-            pkt->val_len = len;
+            pkt->val_len = sizeof(uint16_t);
             memcpy(pkt->value, &val, sizeof(uint16_t));
             break;
         }
         case NVS_TYPE_I16: {
             int16_t val = 0;
-            size_t len = 0;
-            ret = nv->get_item_size((nvs::ItemType)type, key, len);
             ret = ret ?: nv->get_item(key, val);
-            pkt->val_len = len;
+            pkt->val_len = sizeof(int16_t);
             memcpy(pkt->value, &val, sizeof(int16_t));
             break;
         }
         case NVS_TYPE_U32: {
             uint32_t val = 0;
-            size_t len = 0;
-            ret = nv->get_item_size((nvs::ItemType)type, key, len);
             ret = ret ?: nv->get_item(key, val);
-            pkt->val_len = len;
+            pkt->val_len = sizeof(uint32_t);
             memcpy(pkt->value, &val, sizeof(uint32_t));
             break;
         }
         case NVS_TYPE_I32: {
             int32_t val = 0;
-            size_t len = 0;
-            ret = nv->get_item_size((nvs::ItemType)type, key, len);
             ret = ret ?: nv->get_item(key, val);
-            pkt->val_len = len;
+            pkt->val_len = sizeof(int32_t);
             memcpy(pkt->value, &val, sizeof(int32_t));
             break;
         }
 
         case NVS_TYPE_U64: {
             uint64_t val = 0;
-            size_t len = 0;
-            ret = nv->get_item_size((nvs::ItemType)type, key, len);
             ret = ret ?: nv->get_item(key, val);
-            pkt->val_len = len;
+            pkt->val_len = sizeof(uint64_t);
             memcpy(pkt->value, &val, sizeof(uint64_t));
             break;
         }
 
         case NVS_TYPE_I64: {
             int64_t val = 0;
-            size_t len = 0;
-            ret = nv->get_item_size((nvs::ItemType)type, key, len);
             ret = ret ?: nv->get_item(key, val);
-            pkt->val_len = len;
+            pkt->val_len = sizeof(int64_t);
             memcpy(pkt->value, &val, sizeof(int64_t));
             break;
         }
@@ -533,7 +520,7 @@ esp_err_t tcfg_client::get_cfg_from_nvs(const char *ns, const char *key, nvs_typ
         case NVS_TYPE_STR: {
             size_t len = 0;
             ret = nv->get_item_size((nvs::ItemType)type, key, len);
-            ret = ret ?: nv->get_string(key, (char *)pkt->value, sizeof(tx_buf));
+            ret = ret ?: nv->get_string(key, (char *)pkt->value, len);
             pkt->val_len = len;
             break;
         }
@@ -541,7 +528,7 @@ esp_err_t tcfg_client::get_cfg_from_nvs(const char *ns, const char *key, nvs_typ
         case NVS_TYPE_BLOB: {
             size_t len = 0;
             ret = nv->get_item_size((nvs::ItemType)type, key, len);
-            ret = ret ?: nv->get_blob(key, (void *)pkt->value, sizeof(tx_buf));
+            ret = ret ?: nv->get_blob(key, (void *)pkt->value, len);
             pkt->val_len = len;
             break;
         }
